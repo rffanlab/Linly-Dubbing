@@ -83,7 +83,9 @@ def get_aspect_ratio(video_path):
     command = ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
                '-show_entries', 'stream=width,height', '-of', 'json', video_path]
     result = subprocess.run(command, capture_output=True, text=True)
-    dimensions = json.loads(result.stdout)['streams'][0]
+    stdout = result.stdout
+    logger.info(stdout)
+    dimensions = json.loads(stdout)['streams'][0]
     return dimensions['width'] / dimensions['height']
 
 
@@ -252,14 +254,34 @@ def add_subtitles(video_path, srt_path, output_path, subtitle_filter=None, metho
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
 
+        logger.info(f"是否存在原始视频路径: {os.path.exists(video_path)}")
+        logger.info(f"是否存在字幕路径: {os.path.exists(srt_path)}")
         # 开始复制原始文件到临时文件
         shutil.copyfile(video_path, temp_video_path)
         shutil.copyfile(srt_path, temp_srt_path)
 
-        # 使用绝对路径避免路径问题
+        logger.info(f"是否存在临时视频路径: {os.path.exists(temp_video_path)}")
+        logger.info(f"是否存在临时字幕路径: {os.path.exists(temp_srt_path)}")
+
+        # 将视频路径换成绝对路径
         temp_video_path = os.path.abspath(temp_video_path)
-        temp_srt_path = os.path.abspath(temp_srt_path)
-        temp_output_path = os.path.abspath(temp_output_path)
+
+        # 将\\转换成/
+        temp_video_path = temp_video_path.replace('\\', '/')
+        temp_srt_path = temp_srt_path.replace('\\', '/')
+        temp_output_path = temp_output_path.replace('\\', '/')
+
+
+        logger.info(f"是否存在临时视频路径: {os.path.exists(temp_video_path)}")
+        logger.info(f"是否存在临时字幕路径: {os.path.exists(temp_srt_path)}")
+        logger.info(f"是否存在临时输出路径: {os.path.exists(temp_output_path)}")
+        logger.info(f"临时视频路径: {temp_video_path}")
+        logger.info(f"临时字幕路径: {temp_srt_path}")
+        logger.info(f"临时输出路径: {temp_output_path}")
+        logger.info(f"是否能够访问临时视频路径: {os.access(temp_video_path, os.R_OK)}")
+        logger.info(f"是否能够访问临时字幕路径: {os.access(temp_srt_path, os.R_OK)}")
+        logger.info(f"是否能够访问临时输出路径: {os.access(temp_output_path, os.W_OK)}")
+
         # 开始检查确认字幕文件是否存在
         if not os.path.exists(temp_srt_path):
             logger.error(f"字幕文件不存在: {temp_srt_path}")
@@ -302,11 +324,15 @@ def add_subtitles(video_path, srt_path, output_path, subtitle_filter=None, metho
                 style = "FontName=SimHei,FontSize=15,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=2,WrapStyle=2"
                 filter_option = f"subtitles={temp_srt_path}:force_style='{style}'"
 
+                logger.info(f"字幕过滤器: {filter_option}")
+                logger.info(f"是否存在临时字幕路径: {os.path.exists(temp_srt_path)}")
+                logger.info(f"是否存在临时视频路径: {os.path.exists(temp_video_path)}")
+
                 # 构建命令
                 command = [
                     'ffmpeg',
-                    '-i', f"{temp_video_path}",
-                    '-vf', f"{filter_option}",
+                    '-i', temp_video_path,
+                    '-vf', filter_option,
                     '-c:a', 'copy',
                     f"{temp_output_path}",
                     '-y',
@@ -352,17 +378,18 @@ def add_subtitles(video_path, srt_path, output_path, subtitle_filter=None, metho
         logger.debug(f"错误详情: {traceback.format_exc()}")
         return False
     finally:
+        logger.info("执行完毕了。")
         # 清理临时文件
-        temp_files = [temp_video_path, temp_srt_path, temp_output_path]
-        if method == 'ffmpeg':
-            temp_files.append(os.path.join(temp_dir, "subtitles.srt"))
-
-        for temp_file in temp_files:
-            if temp_file and os.path.exists(temp_file):
-                try:
-                    os.remove(temp_file)
-                except Exception as e:
-                    logger.debug(f"无法删除临时文件 {temp_file}: {e}")
+        # temp_files = [temp_video_path, temp_srt_path, temp_output_path]
+        # if method == 'ffmpeg':
+        #     temp_files.append(os.path.join(temp_dir, "subtitles.srt"))
+        #
+        # for temp_file in temp_files:
+        #     if temp_file and os.path.exists(temp_file):
+        #         try:
+        #             os.remove(temp_file)
+        #         except Exception as e:
+        #             logger.debug(f"无法删除临时文件 {temp_file}: {e}")
 
 def synthesize_all_video_under_folder(folder, subtitles=True, speed_up=1.00, fps=30, background_music=None, bgm_volume=0.5, video_volume=1.0, resolution='1080p', watermark_path="f_logo.png"):
     watermark_path = None if not os.path.exists(watermark_path) else watermark_path
