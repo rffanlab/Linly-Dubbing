@@ -3,9 +3,16 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                QSlider, QRadioButton, QLineEdit, QPushButton,
                                QFileDialog, QGroupBox)
 from PySide6.QtCore import Qt, QUrl
-# 正确导入QVideoWidget
-from PySide6.QtMultimediaWidgets import QVideoWidget
-from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
+
+try:
+    # 尝试导入媒体相关组件
+    from PySide6.QtMultimediaWidgets import QVideoWidget
+    from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
+
+    HAS_MULTIMEDIA = True
+except ImportError:
+    print("警告: 无法导入Qt多媒体组件，将使用简化版视频播放器")
+    HAS_MULTIMEDIA = False
 
 
 class CustomSlider(QWidget):
@@ -144,72 +151,96 @@ class AudioSelector(QWidget):
 
 
 class VideoPlayer(QWidget):
-    """改进的视频播放控件"""
+    """简化版视频播放控件，可处理多媒体组件不可用的情况"""
 
     def __init__(self, label, parent=None):
         super().__init__(parent)
         self.layout = QVBoxLayout(self)
+        self.video_path = None
 
         self.label = QLabel(label)
         self.layout.addWidget(self.label)
 
-        # 创建视频部件
-        self.video_widget = QVideoWidget()
-        self.video_widget.setMinimumHeight(200)  # 设置最小高度确保可见
-
-        # 创建媒体播放器并配置音频输出
-        self.media_player = QMediaPlayer()
-        self.media_player.setVideoOutput(self.video_widget)
-
-        # 使用音频输出对象控制音量
-        self.audio_output = QAudioOutput()
-        self.media_player.setAudioOutput(self.audio_output)  # 设置音频输出
-        self.audio_output.setVolume(0.7)  # 设置默认音量为70%
-
-        # 添加音量控制滑块
-        self.volume_slider = QSlider(Qt.Horizontal)
-        self.volume_slider.setRange(0, 100)
-        self.volume_slider.setValue(70)
-        self.volume_slider.setToolTip("音量")
-        self.volume_slider.valueChanged.connect(self.set_volume)
-
-        # 连接错误信号
-        self.media_player.errorOccurred.connect(self.handle_error)
-
-        # 创建控制部件
-        self.controls_layout = QHBoxLayout()
-        self.play_button = QPushButton("播放")
-        self.play_button.clicked.connect(self.play_pause)
-
-        # 添加暂停和停止按钮
-        self.stop_button = QPushButton("停止")
-        self.stop_button.clicked.connect(self.stop_video)
-
-        # 状态标签
+        # 创建简单的视频状态显示
         self.status_label = QLabel("就绪")
 
-        # 组装控制栏
-        self.controls_layout.addWidget(self.play_button)
-        self.controls_layout.addWidget(self.stop_button)
+        if HAS_MULTIMEDIA:
+            # 如果多媒体组件可用，创建完整播放器
+            try:
+                # 创建视频部件
+                self.video_widget = QVideoWidget()
+                self.video_widget.setMinimumHeight(200)  # 设置最小高度确保可见
 
-        # 添加音量控制
-        volume_layout = QHBoxLayout()
-        volume_layout.addWidget(QLabel("音量:"))
-        volume_layout.addWidget(self.volume_slider)
+                # 创建媒体播放器并配置音频输出
+                self.media_player = QMediaPlayer()
+                self.media_player.setVideoOutput(self.video_widget)
 
-        self.controls_layout.addLayout(volume_layout)
-        self.controls_layout.addWidget(self.status_label)
+                # 使用音频输出对象控制音量
+                self.audio_output = QAudioOutput()
+                self.media_player.setAudioOutput(self.audio_output)  # 设置音频输出
+                self.audio_output.setVolume(0.7)  # 设置默认音量为70%
 
-        self.layout.addWidget(self.video_widget)
-        self.layout.addLayout(self.controls_layout)
+                # 添加音量控制滑块
+                self.volume_slider = QSlider(Qt.Horizontal)
+                self.volume_slider.setRange(0, 100)
+                self.volume_slider.setValue(70)
+                self.volume_slider.setToolTip("音量")
+                self.volume_slider.valueChanged.connect(self.set_volume)
+
+                # 创建控制部件
+                self.controls_layout = QHBoxLayout()
+                self.play_button = QPushButton("播放")
+                self.play_button.clicked.connect(self.play_pause)
+
+                # 添加暂停和停止按钮
+                self.stop_button = QPushButton("停止")
+                self.stop_button.clicked.connect(self.stop_video)
+
+                # 组装控制栏
+                self.controls_layout.addWidget(self.play_button)
+                self.controls_layout.addWidget(self.stop_button)
+
+                # 添加音量控制
+                volume_layout = QHBoxLayout()
+                volume_layout.addWidget(QLabel("音量:"))
+                volume_layout.addWidget(self.volume_slider)
+
+                self.controls_layout.addLayout(volume_layout)
+                self.controls_layout.addWidget(self.status_label)
+
+                self.layout.addWidget(self.video_widget)
+                self.layout.addLayout(self.controls_layout)
+            except Exception as e:
+                print(f"创建视频播放器失败，使用简化版: {e}")
+                self._use_simple_player()
+        else:
+            # 如果多媒体组件不可用，使用简化版播放器
+            self._use_simple_player()
+
         self.setLayout(self.layout)
 
-        self.video_path = None
+    def _use_simple_player(self):
+        """当无法创建标准视频播放器时使用的简化版"""
+        self.video_placeholder = QLabel("视频预览不可用")
+        self.video_placeholder.setAlignment(Qt.AlignCenter)
+        self.video_placeholder.setStyleSheet("background-color: #222; color: white; min-height: 200px;")
+
+        self.controls_layout = QHBoxLayout()
+        self.play_button = QPushButton("播放")
+        self.play_button.setEnabled(False)
+
+        self.controls_layout.addWidget(self.play_button)
+        self.controls_layout.addWidget(self.status_label)
+
+        self.layout.addWidget(self.video_placeholder)
+        self.layout.addLayout(self.controls_layout)
 
     def set_volume(self, volume):
-        # 转换音量范围从0-100到0.0-1.0
-        self.audio_output.setVolume(volume / 100.0)
-        self.status_label.setText(f"音量: {volume}%")
+        """设置音量，仅在多媒体组件可用时有效"""
+        if HAS_MULTIMEDIA and hasattr(self, 'audio_output'):
+            # 转换音量范围从0-100到0.0-1.0
+            self.audio_output.setVolume(volume / 100.0)
+            self.status_label.setText(f"音量: {volume}%")
 
     def set_video(self, path):
         """设置视频源"""
@@ -218,15 +249,21 @@ class VideoPlayer(QWidget):
             return
 
         self.video_path = path
-        try:
-            # 使用QUrl构建文件路径
-            url = QUrl.fromLocalFile(os.path.abspath(path))
-            self.media_player.setSource(url)
-            self.status_label.setText(f"已加载: {os.path.basename(path)}")
-            self.play_button.setEnabled(True)
-            self.stop_button.setEnabled(True)
-        except Exception as e:
-            self.status_label.setText(f"错误: {str(e)}")
+        self.status_label.setText(f"已加载: {os.path.basename(path)}")
+
+        if HAS_MULTIMEDIA and hasattr(self, 'media_player'):
+            try:
+                # 使用QUrl构建文件路径
+                url = QUrl.fromLocalFile(os.path.abspath(path))
+                self.media_player.setSource(url)
+                self.play_button.setEnabled(True)
+                self.stop_button.setEnabled(True)
+            except Exception as e:
+                self.status_label.setText(f"错误: {str(e)}")
+        else:
+            # 简化版播放器只更新状态
+            if hasattr(self, 'video_placeholder'):
+                self.video_placeholder.setText(f"视频已加载: {os.path.basename(path)}\n(预览不可用)")
 
     def play_pause(self):
         """播放或暂停视频"""
@@ -234,22 +271,25 @@ class VideoPlayer(QWidget):
             self.status_label.setText("错误: 未加载视频")
             return
 
-        if self.media_player.playbackState() == QMediaPlayer.PlayingState:
-            self.media_player.pause()
-            self.play_button.setText("播放")
-            self.status_label.setText("已暂停")
+        if HAS_MULTIMEDIA and hasattr(self, 'media_player'):
+            if self.media_player.playbackState() == QMediaPlayer.PlayingState:
+                self.media_player.pause()
+                self.play_button.setText("播放")
+                self.status_label.setText("已暂停")
+            else:
+                self.media_player.play()
+                self.play_button.setText("暂停")
+                self.status_label.setText("正在播放")
         else:
-            self.media_player.play()
-            self.play_button.setText("暂停")
-            self.status_label.setText("正在播放")
+            # 简化版播放器只更新状态
+            self.status_label.setText("播放功能不可用")
 
     def stop_video(self):
         """停止视频播放"""
-        self.media_player.stop()
-        self.play_button.setText("播放")
-        self.status_label.setText("已停止")
-
-    def handle_error(self, error, error_string):
-        """处理媒体播放器错误"""
-        self.status_label.setText(f"播放错误: {error_string}")
-        print(f"Video player error ({error}): {error_string}")
+        if HAS_MULTIMEDIA and hasattr(self, 'media_player'):
+            self.media_player.stop()
+            self.play_button.setText("播放")
+            self.status_label.setText("已停止")
+        else:
+            # 简化版播放器只更新状态
+            self.status_label.setText("停止功能不可用")
