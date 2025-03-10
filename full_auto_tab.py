@@ -130,8 +130,34 @@ class FullAutoTab(QWidget):
         self.left_layout.addWidget(self.task_list_label)
 
         self.task_table = QTableView()
+
+        # 使用自定义列宽设置
         header = self.task_table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.Stretch)
+        # 设置列的大小调整模式
+        header.setSectionResizeMode(QHeaderView.Interactive)  # 默认允许用户调整
+
+        # 表格数据加载后调整列宽
+        def adjust_column_widths():
+            if self.task_table.model():
+                # ID列固定宽度
+                self.task_table.setColumnWidth(0, 40)
+                # URL列拓宽，占用大部分空间
+                available_width = self.task_table.width() - 350  # 减去其他列的总宽度
+                self.task_table.setColumnWidth(1, max(200, available_width))
+                # 其他列固定宽度
+                self.task_table.setColumnWidth(2, 120)  # 开始时间
+                self.task_table.setColumnWidth(3, 120)  # 完成时间
+                self.task_table.setColumnWidth(4, 150)  # 结果
+
+                # 设置URL列自动拉伸
+                header.setSectionResizeMode(1, QHeaderView.Stretch)
+
+        # 添加表格大小变化事件处理
+        self.task_table.resizeEvent = lambda event: adjust_column_widths()
+
+        # 设置表格视图其他属性
+        self.task_table.setSelectionBehavior(QTableView.SelectRows)  # 整行选择
+        self.task_table.setAlternatingRowColors(True)  # 交替行颜色
 
         self.left_layout.addWidget(self.task_table)
 
@@ -152,6 +178,8 @@ class FullAutoTab(QWidget):
         # 右侧区域
         self.right_widget = QWidget()
         self.right_layout = QVBoxLayout(self.right_widget)
+        self.right_layout.setContentsMargins(10, 10, 10, 10)  # 设置合理的边距
+        self.right_layout.setSpacing(10)  # 控件之间的间距
 
         # 执行按钮区域
         self.button_layout = QHBoxLayout()
@@ -215,15 +243,21 @@ class FullAutoTab(QWidget):
         # 视频播放器容器
         self.video_container = QWidget()
         self.video_layout = QVBoxLayout(self.video_container)
-        self.video_layout.addWidget(QLabel("视频预览:"))
-        self.video_player = VideoPlayer("视频播放器")
+        self.video_layout.setContentsMargins(0, 0, 0, 0)  # 移除内边距
+        self.video_player = VideoPlayer("视频预览：")
+        self.video_player.setContentsMargins(0, 0, 0, 0)  # 移除内边距
         self.video_layout.addWidget(self.video_player)
 
         # 日志容器
         self.log_container = QWidget()
         self.log_layout = QVBoxLayout(self.log_container)
-        self.log_layout.addWidget(QLabel("处理日志:"))
+        self.log_layout.setContentsMargins(0, 0, 0, 0)  # 移除内边距
 
+        # 添加日志标签
+        self.log_label = QLabel("处理日志:")
+        self.log_layout.addWidget(self.log_label)
+
+        # 添加日志文本框
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
         self.log_layout.addWidget(self.log_text)
@@ -238,12 +272,15 @@ class FullAutoTab(QWidget):
         self.log_button_layout.addWidget(self.save_log_button)
         self.log_layout.addLayout(self.log_button_layout)
 
-        self.log_container.setLayout(self.log_layout)
-
-        # 添加到分割器
+        # 添加到分割器并优化尺寸分配
         self.right_splitter.addWidget(self.video_container)
         self.right_splitter.addWidget(self.log_container)
-        self.right_splitter.setSizes([600, 400])
+
+        # 设置更合理的尺寸分配 - 视频区域和日志区域各占一半
+        self.right_splitter.setSizes([500, 500])
+
+        # 防止分割条移动过多导致某个部分完全消失
+        self.right_splitter.setChildrenCollapsible(False)
 
         self.right_layout.addWidget(self.right_splitter)
 
@@ -251,7 +288,16 @@ class FullAutoTab(QWidget):
         self.main_splitter = QSplitter()
         self.main_splitter.addWidget(self.left_widget)
         self.main_splitter.addWidget(self.right_widget)
-        self.main_splitter.setSizes([400, 600])
+
+        # 设置更平衡的尺寸分配
+        self.main_splitter.setSizes([500, 500])
+
+        # 防止分割条移动过多导致某个部分完全消失
+        self.main_splitter.setChildrenCollapsible(False)
+
+        # 设置最小宽度，确保两侧都有足够的空间
+        self.left_widget.setMinimumWidth(300)
+        self.right_widget.setMinimumWidth(300)
 
         self.main_layout.addWidget(self.main_splitter)
 

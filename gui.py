@@ -90,7 +90,7 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.setWindowTitle("简化版本 - Linly-Dubbing")
-        self.resize(1024, 768)
+        self.resize(1440, 900)
 
         try:
             # 创建选项卡

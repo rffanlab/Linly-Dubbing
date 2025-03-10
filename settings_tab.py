@@ -1,11 +1,104 @@
 import os
 import json
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea,
-                               QPushButton, QMessageBox, QSplitter)
+                               QPushButton, QMessageBox, QSplitter, QComboBox,
+                               QFormLayout, QFileDialog, QLineEdit)
 from PySide6.QtCore import Qt, Signal
 
-from ui_components import (CustomSlider, FloatSlider, RadioButtonGroup,
-                           AudioSelector, VideoPlayer)
+from ui_components import (CustomSlider, FloatSlider, AudioSelector, VideoPlayer)
+
+
+class FolderSelector(QWidget):
+    """文件夹选择组件"""
+
+    def __init__(self, default_path="videos", parent=None):
+        super().__init__(parent)
+        self.layout = QHBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+
+        # 创建路径输入框
+        self.path_edit = QLineEdit(default_path)
+
+        # 创建浏览按钮
+        self.browse_button = QPushButton("选择...")
+        self.browse_button.clicked.connect(self.browse_folder)
+
+        # 添加到布局
+        self.layout.addWidget(self.path_edit, 1)  # 1是拉伸因子，使输入框占据更多空间
+        self.layout.addWidget(self.browse_button)
+
+        self.setLayout(self.layout)
+
+    def browse_folder(self):
+        """打开文件夹选择对话框"""
+        folder = QFileDialog.getExistingDirectory(
+            self, "选择视频输出文件夹", self.path_edit.text(),
+            QFileDialog.ShowDirsOnly | QFileDialog.DontResolveSymlinks
+        )
+        if folder:
+            self.path_edit.setText(folder)
+
+    def text(self):
+        """获取当前路径"""
+        return self.path_edit.text()
+
+    def setText(self, path):
+        """设置路径"""
+        self.path_edit.setText(path)
+
+
+class DropdownSelector(QWidget):
+    """下拉选择框，用于替代单选按钮组"""
+
+    def __init__(self, options, label, default_value, parent=None):
+        super().__init__(parent)
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(2)
+
+        # 创建标签
+        if label:
+            self.label = QLabel(label)
+            self.layout.addWidget(self.label)
+
+        # 创建下拉框
+        self.comboBox = QComboBox()
+        # 存储选项
+        self.options = options
+
+        # 根据选项类型，可能需要不同的显示方式
+        for option in options:
+            # 处理布尔类型选项
+            if isinstance(option, bool):
+                display_text = "是" if option else "否"
+                self.comboBox.addItem(display_text, option)
+            # 处理None类型选项
+            elif option is None:
+                self.comboBox.addItem("无", None)
+            # 其他类型选项直接添加
+            else:
+                self.comboBox.addItem(str(option), option)
+
+        # 设置默认值
+        if default_value is not None:
+            for i in range(self.comboBox.count()):
+                if self.comboBox.itemData(i) == default_value:
+                    self.comboBox.setCurrentIndex(i)
+                    break
+
+        self.layout.addWidget(self.comboBox)
+        self.setLayout(self.layout)
+
+    def value(self):
+        """获取当前选中的值"""
+        return self.comboBox.currentData()
+
+    def setValue(self, value):
+        """设置当前选中的值"""
+        for i in range(self.comboBox.count()):
+            if self.comboBox.itemData(i) == value:
+                self.comboBox.setCurrentIndex(i)
+                return
 
 
 class SettingsTab(QWidget):
@@ -52,167 +145,215 @@ class SettingsTab(QWidget):
         self.setLayout(self.layout)
 
     def add_config_widgets(self):
-        """添加所有配置控件"""
+        """添加所有配置控件，使用表单布局和下拉选择框"""
         # 视频配置
-        self.scroll_layout.addWidget(QLabel("=== 视频下载配置 ==="))
-        self.scroll_layout.addWidget(QLabel("视频输出文件夹"))
-        self.video_folder = self.add_label_value("videos", "视频输出到此文件夹")
+        self.add_section_header("视频下载配置")
+        video_form = QFormLayout()
+        video_form.setVerticalSpacing(4)
 
-        # 分辨率
-        self.resolution = RadioButtonGroup(
+        # 视频输出文件夹 - 使用FolderSelector
+        self.video_folder = FolderSelector("videos")
+        self.video_folder.setToolTip("选择视频输出到的文件夹")
+        video_form.addRow("视频输出文件夹:", self.video_folder)
+
+        # 分辨率 - 使用下拉框
+        self.resolution = DropdownSelector(
             ['4320p', '2160p', '1440p', '1080p', '720p', '480p', '360p', '240p', '144p'],
-            "分辨率",
+            "",
             '1080p'
         )
-        self.scroll_layout.addWidget(self.resolution)
+        video_form.addRow("分辨率:", self.resolution)
 
         # 下载视频数量
-        self.video_count = CustomSlider(1, 100, 1, "下载视频数量", 5)
-        self.scroll_layout.addWidget(self.video_count)
+        self.video_count = CustomSlider(1, 100, 1, "", 5)
+        video_form.addRow("下载视频数量:", self.video_count)
+
+        video_widget = QWidget()
+        video_widget.setLayout(video_form)
+        self.scroll_layout.addWidget(video_widget)
 
         # 音频处理配置
-        self.scroll_layout.addWidget(QLabel("=== 音频处理配置 ==="))
-        # 模型
-        self.model = RadioButtonGroup(
+        self.add_section_header("音频处理配置")
+        audio_form = QFormLayout()
+        audio_form.setVerticalSpacing(4)
+
+        # 人声分离模型
+        self.model = DropdownSelector(
             ['htdemucs', 'htdemucs_ft', 'htdemucs_6s', 'hdemucs_mmi', 'mdx', 'mdx_extra', 'mdx_q', 'mdx_extra_q',
              'SIG'],
-            "人声分离模型",
+            "",
             'htdemucs_ft'
         )
-        self.scroll_layout.addWidget(self.model)
+        audio_form.addRow("人声分离模型:", self.model)
 
         # 计算设备
-        self.device = RadioButtonGroup(['auto', 'cuda', 'cpu'], "计算设备", 'auto')
-        self.scroll_layout.addWidget(self.device)
+        self.device = DropdownSelector(['auto', 'cuda', 'cpu'], "", 'auto')
+        audio_form.addRow("计算设备:", self.device)
 
         # 移位次数
-        self.shifts = CustomSlider(0, 10, 1, "移位次数 Number of shifts", 5)
-        self.scroll_layout.addWidget(self.shifts)
+        self.shifts = CustomSlider(0, 10, 1, "", 5)
+        audio_form.addRow("移位次数:", self.shifts)
+
+        audio_widget = QWidget()
+        audio_widget.setLayout(audio_form)
+        self.scroll_layout.addWidget(audio_widget)
 
         # ASR配置
-        self.scroll_layout.addWidget(QLabel("=== 语音识别配置 ==="))
-        # ASR模型选择
-        self.asr_model_label = QLabel("ASR模型选择")
-        self.scroll_layout.addWidget(self.asr_model_label)
-        self.asr_model = RadioButtonGroup(['WhisperX', 'FunASR'], "ASR模型选择", 'WhisperX')
-        self.scroll_layout.addWidget(self.asr_model)
+        self.add_section_header("语音识别配置")
+        asr_form = QFormLayout()
+        asr_form.setVerticalSpacing(4)
+
+        # ASR模型
+        self.asr_model = DropdownSelector(['WhisperX', 'FunASR'], "", 'WhisperX')
+        asr_form.addRow("ASR模型:", self.asr_model)
 
         # WhisperX模型大小
-        self.whisperx_size = RadioButtonGroup(['large', 'medium', 'small', 'base', 'tiny'], "WhisperX模型大小", 'large')
-        self.scroll_layout.addWidget(self.whisperx_size)
+        self.whisperx_size = DropdownSelector(['large', 'medium', 'small', 'base', 'tiny'], "", 'large')
+        asr_form.addRow("WhisperX模型大小:", self.whisperx_size)
 
         # 批处理大小
-        self.batch_size = CustomSlider(1, 128, 1, "批处理大小 Batch Size", 32)
-        self.scroll_layout.addWidget(self.batch_size)
+        self.batch_size = CustomSlider(1, 128, 1, "", 32)
+        asr_form.addRow("批处理大小:", self.batch_size)
 
         # 分离多个说话人
-        self.separate_speakers = RadioButtonGroup([True, False], "分离多个说话人", True)
-        self.scroll_layout.addWidget(self.separate_speakers)
+        self.separate_speakers = DropdownSelector([True, False], "", True)
+        asr_form.addRow("分离多个说话人:", self.separate_speakers)
 
         # 最小说话人数
-        self.min_speakers = RadioButtonGroup([None, 1, 2, 3, 4, 5, 6, 7, 8, 9], "最小说话人数", None)
-        self.scroll_layout.addWidget(self.min_speakers)
+        self.min_speakers = DropdownSelector([None, 1, 2, 3, 4, 5, 6, 7, 8, 9], "", None)
+        asr_form.addRow("最小说话人数:", self.min_speakers)
 
         # 最大说话人数
-        self.max_speakers = RadioButtonGroup([None, 1, 2, 3, 4, 5, 6, 7, 8, 9], "最大说话人数", None)
-        self.scroll_layout.addWidget(self.max_speakers)
+        self.max_speakers = DropdownSelector([None, 1, 2, 3, 4, 5, 6, 7, 8, 9], "", None)
+        asr_form.addRow("最大说话人数:", self.max_speakers)
+
+        asr_widget = QWidget()
+        asr_widget.setLayout(asr_form)
+        self.scroll_layout.addWidget(asr_widget)
 
         # 翻译配置
-        self.scroll_layout.addWidget(QLabel("=== 翻译配置 ==="))
+        self.add_section_header("翻译配置")
+        translation_form = QFormLayout()
+        translation_form.setVerticalSpacing(4)
+
         # 翻译方式
-        self.translation_method_label = QLabel("翻译方式")
-        self.scroll_layout.addWidget(self.translation_method_label)
-        self.translation_method = RadioButtonGroup(
-            ['OpenAI', 'LLM', 'Google Translate', 'Bing Translate', 'Ernie', '火山引擎-deepseek', "deepseek-api",
-             "阿里云-通义千问","Ollama"], "翻译方式", 'LLM')
-        self.scroll_layout.addWidget(self.translation_method)
+        self.translation_method = DropdownSelector(
+            ['OpenAI', 'LLM', 'Google Translate', 'Bing Translate', 'Ernie', '火山引擎-deepseek',
+             "deepseek-api", "阿里云-通义千问", "Ollama"],
+            "",
+            'LLM'
+        )
+        translation_form.addRow("翻译方式:", self.translation_method)
 
         # 目标语言 (翻译)
-        self.target_language_translation_label = QLabel("目标语言 (翻译)")
-        self.scroll_layout.addWidget(self.target_language_translation_label)
-        self.target_language_translation = RadioButtonGroup(
-            ['简体中文', '繁体中文', 'English', 'Cantonese', 'Japanese', 'Korean'], "目标语言 (翻译)", '简体中文')
-        self.scroll_layout.addWidget(self.target_language_translation)
+        self.target_language_translation = DropdownSelector(
+            ['简体中文', '繁体中文', 'English', 'Cantonese', 'Japanese', 'Korean'],
+            "",
+            '简体中文'
+        )
+        translation_form.addRow("目标语言(翻译):", self.target_language_translation)
+
+        translation_widget = QWidget()
+        translation_widget.setLayout(translation_form)
+        self.scroll_layout.addWidget(translation_widget)
 
         # TTS配置
-        self.scroll_layout.addWidget(QLabel("=== 语音合成配置 ==="))
+        self.add_section_header("语音合成配置")
+        tts_form = QFormLayout()
+        tts_form.setVerticalSpacing(4)
+
         # AI语音生成方法
-        self.tts_method_label = QLabel("AI语音生成方法")
-        self.scroll_layout.addWidget(self.tts_method_label)
-        self.tts_method = RadioButtonGroup(['xtts', 'cosyvoice', 'EdgeTTS'], "AI语音生成方法", 'EdgeTTS')
-        self.scroll_layout.addWidget(self.tts_method)
+        self.tts_method = DropdownSelector(['xtts', 'cosyvoice', 'EdgeTTS'], "", 'EdgeTTS')
+        tts_form.addRow("TTS方法:", self.tts_method)
 
         # 目标语言 (TTS)
-        self.target_language_tts_label = QLabel("目标语言 (TTS)")
-        self.scroll_layout.addWidget(self.target_language_tts_label)
-        self.target_language_tts = RadioButtonGroup(
-            ['中文', 'English', '粤语', 'Japanese', 'Korean', 'Spanish', 'French'], "目标语言 (TTS)", '中文')
-        self.scroll_layout.addWidget(self.target_language_tts)
+        self.target_language_tts = DropdownSelector(
+            ['中文', 'English', '粤语', 'Japanese', 'Korean', 'Spanish', 'French'],
+            "",
+            '中文'
+        )
+        tts_form.addRow("目标语言(TTS):", self.target_language_tts)
 
         # EdgeTTS声音选择
-        self.edge_tts_voice_label = QLabel("EdgeTTS声音选择")
-        self.scroll_layout.addWidget(self.edge_tts_voice_label)
-        self.edge_tts_voice = RadioButtonGroup(
+        self.edge_tts_voice = DropdownSelector(
             ['zh-CN-XiaoxiaoNeural', 'zh-CN-YunxiNeural', 'en-US-JennyNeural', 'ja-JP-NanamiNeural'],
-            "EdgeTTS声音选择", 'zh-CN-XiaoxiaoNeural')
-        self.scroll_layout.addWidget(self.edge_tts_voice)
+            "",
+            'zh-CN-XiaoxiaoNeural'
+        )
+        tts_form.addRow("EdgeTTS声音:", self.edge_tts_voice)
+
+        tts_widget = QWidget()
+        tts_widget.setLayout(tts_form)
+        self.scroll_layout.addWidget(tts_widget)
 
         # 视频合成配置
-        self.scroll_layout.addWidget(QLabel("=== 视频合成配置 ==="))
+        self.add_section_header("视频合成配置")
+        synthesis_form = QFormLayout()
+        synthesis_form.setVerticalSpacing(4)
+
         # 添加字幕
-        self.add_subtitles = RadioButtonGroup([True, False], "添加字幕", True)
-        self.scroll_layout.addWidget(self.add_subtitles)
+        self.add_subtitles = DropdownSelector([True, False], "", True)
+        synthesis_form.addRow("添加字幕:", self.add_subtitles)
 
         # 加速倍数
-        self.speed_factor = FloatSlider(0.5, 2, 0.05, "加速倍数", 1.00)
-        self.scroll_layout.addWidget(self.speed_factor)
+        self.speed_factor = FloatSlider(0.5, 2, 0.05, "", 1.00)
+        synthesis_form.addRow("加速倍数:", self.speed_factor)
 
         # 帧率
-        self.frame_rate = CustomSlider(1, 60, 1, "帧率", 30)
-        self.scroll_layout.addWidget(self.frame_rate)
+        self.frame_rate = CustomSlider(1, 60, 1, "", 30)
+        synthesis_form.addRow("帧率:", self.frame_rate)
 
         # 背景音乐
-        self.background_music = AudioSelector("背景音乐")
-        self.scroll_layout.addWidget(self.background_music)
+        self.background_music = AudioSelector("")
+        synthesis_form.addRow("背景音乐:", self.background_music)
 
         # 背景音乐音量
-        self.bg_music_volume = FloatSlider(0, 1, 0.05, "背景音乐音量", 0.5)
-        self.scroll_layout.addWidget(self.bg_music_volume)
+        self.bg_music_volume = FloatSlider(0, 1, 0.05, "", 0.5)
+        synthesis_form.addRow("背景音乐音量:", self.bg_music_volume)
 
         # 视频音量
-        self.video_volume = FloatSlider(0, 1, 0.05, "视频音量", 1.0)
-        self.scroll_layout.addWidget(self.video_volume)
+        self.video_volume = FloatSlider(0, 1, 0.05, "", 1.0)
+        synthesis_form.addRow("视频音量:", self.video_volume)
 
         # 分辨率 (输出)
-        self.output_resolution = RadioButtonGroup(
+        self.output_resolution = DropdownSelector(
             ['4320p', '2160p', '1440p', '1080p', '720p', '480p', '360p', '240p', '144p'],
-            "输出分辨率",
+            "",
             '1080p'
         )
-        self.scroll_layout.addWidget(self.output_resolution)
+        synthesis_form.addRow("输出分辨率:", self.output_resolution)
+
+        synthesis_widget = QWidget()
+        synthesis_widget.setLayout(synthesis_form)
+        self.scroll_layout.addWidget(synthesis_widget)
 
         # 高级配置
-        self.scroll_layout.addWidget(QLabel("=== 高级配置 ==="))
+        self.add_section_header("高级配置")
+        advanced_form = QFormLayout()
+        advanced_form.setVerticalSpacing(4)
+
         # Max Workers
-        self.max_workers = CustomSlider(1, 100, 1, "Max Workers", 1)
-        self.scroll_layout.addWidget(self.max_workers)
+        self.max_workers = CustomSlider(1, 10, 1, "", 1)
+        advanced_form.addRow("最大工作线程:", self.max_workers)
 
         # Max Retries
-        self.max_retries = CustomSlider(1, 10, 1, "Max Retries", 3)
-        self.scroll_layout.addWidget(self.max_retries)
+        self.max_retries = CustomSlider(1, 10, 1, "", 3)
+        advanced_form.addRow("最大重试次数:", self.max_retries)
 
-    def add_label_value(self, value, tooltip=None):
-        """为简单的文本值创建一个标签"""
-        label = QLabel(value)
-        if tooltip:
-            label.setToolTip(tooltip)
+        advanced_widget = QWidget()
+        advanced_widget.setLayout(advanced_form)
+        self.scroll_layout.addWidget(advanced_widget)
+
+    def add_section_header(self, title):
+        """添加部分标题"""
+        label = QLabel(f"=== {title} ===")
+        label.setStyleSheet("font-weight: bold; color: #2196F3;")
         self.scroll_layout.addWidget(label)
-        return label
 
     def get_config(self):
         """从UI控件中获取当前配置"""
         config = {
-            "video_folder": self.video_folder.text(),
+            "video_folder": self.video_folder.text(),  # 使用text()方法获取路径
             "resolution": self.resolution.value(),
             "video_count": self.video_count.value(),
             "model": self.model.value(),
@@ -245,123 +386,41 @@ class SettingsTab(QWidget):
         """将配置应用到UI控件"""
         try:
             # 基本设置
-            self.video_folder.setText(config.get("video_folder", "videos"))
+            self.video_folder.setText(config.get("video_folder", "videos"))  # 使用setText方法设置路径
 
-            # 为每个单选按钮组应用更健壮的选择逻辑
-            # 分辨率
-            resolution_value = config.get("resolution", "1080p")
-            self._set_radio_button(self.resolution.buttons, resolution_value, "1080p")
-
-            # 视频数量
+            # 使用下拉框的setValue方法
+            self.resolution.setValue(config.get("resolution", "1080p"))
             self.video_count.setValue(config.get("video_count", 5))
-
-            # 模型
-            model_value = config.get("model", "htdemucs_ft")
-            self._set_radio_button(self.model.buttons, model_value, "htdemucs_ft")
-
-            # 设备
-            device_value = config.get("device", "auto")
-            self._set_radio_button(self.device.buttons, device_value, "auto")
-
-            # 移位次数
+            self.model.setValue(config.get("model", "htdemucs_ft"))
+            self.device.setValue(config.get("device", "auto"))
             self.shifts.setValue(config.get("shifts", 5))
-
-            # ASR模型
-            asr_model_value = config.get("asr_model", "WhisperX")
-            self._set_radio_button(self.asr_model.buttons, asr_model_value, "WhisperX")
-
-            # WhisperX模型大小
-            whisperx_size_value = config.get("whisperx_size", "large")
-            self._set_radio_button(self.whisperx_size.buttons, whisperx_size_value, "large")
-
-            # 批处理大小
+            self.asr_model.setValue(config.get("asr_model", "WhisperX"))
+            self.whisperx_size.setValue(config.get("whisperx_size", "large"))
             self.batch_size.setValue(config.get("batch_size", 32))
-
-            # 分离多个说话人
-            separate_speakers_value = config.get("separate_speakers", True)
-            self._set_radio_button(self.separate_speakers.buttons, separate_speakers_value, True)
-
-            # 最小说话人数
-            min_speakers_value = config.get("min_speakers", None)
-            self._set_radio_button(self.min_speakers.buttons, min_speakers_value, None)
-
-            # 最大说话人数
-            max_speakers_value = config.get("max_speakers", None)
-            self._set_radio_button(self.max_speakers.buttons, max_speakers_value, None)
-
-            # 翻译方式
-            translation_method_value = config.get("translation_method", "LLM")
-            self._set_radio_button(self.translation_method.buttons, translation_method_value, "LLM")
-
-            # 目标语言 (翻译)
-            target_lang_trans_value = config.get("target_language_translation", "简体中文")
-            self._set_radio_button(self.target_language_translation.buttons, target_lang_trans_value, "简体中文")
-
-            # TTS方法
-            tts_method_value = config.get("tts_method", "EdgeTTS")
-            self._set_radio_button(self.tts_method.buttons, tts_method_value, "EdgeTTS")
-
-            # 目标语言 (TTS)
-            target_lang_tts_value = config.get("target_language_tts", "中文")
-            self._set_radio_button(self.target_language_tts.buttons, target_lang_tts_value, "中文")
-
-            # EdgeTTS声音选择
-            edge_tts_voice_value = config.get("edge_tts_voice", "zh-CN-XiaoxiaoNeural")
-            self._set_radio_button(self.edge_tts_voice.buttons, edge_tts_voice_value, "zh-CN-XiaoxiaoNeural")
-
-            # 添加字幕
-            add_subtitles_value = config.get("add_subtitles", True)
-            self._set_radio_button(self.add_subtitles.buttons, add_subtitles_value, True)
-
-            # 加速倍数
+            self.separate_speakers.setValue(config.get("separate_speakers", True))
+            self.min_speakers.setValue(config.get("min_speakers", None))
+            self.max_speakers.setValue(config.get("max_speakers", None))
+            self.translation_method.setValue(config.get("translation_method", "LLM"))
+            self.target_language_translation.setValue(config.get("target_language_translation", "简体中文"))
+            self.tts_method.setValue(config.get("tts_method", "EdgeTTS"))
+            self.target_language_tts.setValue(config.get("target_language_tts", "中文"))
+            self.edge_tts_voice.setValue(config.get("edge_tts_voice", "zh-CN-XiaoxiaoNeural"))
+            self.add_subtitles.setValue(config.get("add_subtitles", True))
             self.speed_factor.setValue(config.get("speed_factor", 1.00))
-
-            # 帧率
             self.frame_rate.setValue(config.get("frame_rate", 30))
 
             # 背景音乐
             if config.get("background_music"):
                 self.background_music.file_path.setText(config.get("background_music"))
 
-            # 背景音乐音量
             self.bg_music_volume.setValue(config.get("bg_music_volume", 0.5))
-
-            # 视频音量
             self.video_volume.setValue(config.get("video_volume", 1.0))
-
-            # 输出分辨率
-            output_resolution_value = config.get("output_resolution", "1080p")
-            self._set_radio_button(self.output_resolution.buttons, output_resolution_value, "1080p")
-
-            # 最大工作线程数
+            self.output_resolution.setValue(config.get("output_resolution", "1080p"))
             self.max_workers.setValue(config.get("max_workers", 1))
-
-            # 最大重试次数
             self.max_retries.setValue(config.get("max_retries", 3))
 
         except Exception as e:
             QMessageBox.warning(self, "配置加载错误", f"加载配置时出错: {str(e)}")
-
-    def _set_radio_button(self, buttons, value, default_value):
-        """辅助方法：安全地设置单选按钮值"""
-        try:
-            # 尝试找到匹配的选项并选中对应的按钮
-            for option, button in buttons:
-                if option == value:
-                    button.setChecked(True)
-                    return
-
-            # 如果没找到，使用默认值
-            for option, button in buttons:
-                if option == default_value:
-                    button.setChecked(True)
-                    return
-        except Exception:
-            # 如果出现任何错误，尝试使用默认值
-            for option, button in buttons:
-                if option == default_value:
-                    button.setChecked(True)
-                    return
 
     def save_config(self):
         """保存配置到JSON文件"""

@@ -21,13 +21,17 @@ class Task:
         self.config = config or "{}"  # 存储任务配置的JSON字符串
 
 
+# 修改 task_manager.py 中的 TaskTableModel 类的显示逻辑
+# 注意：这个修改不会改变数据库结构或Task类定义，只是调整显示方式
+
 class TaskTableModel(QAbstractTableModel):
     """任务表格数据模型"""
 
     def __init__(self, tasks=None):
         super().__init__()
         self.tasks = tasks or []
-        self.headers = ["ID", "URL", "状态", "创建时间", "开始时间", "完成时间", "结果"]
+        # 只显示这些列，移除"创建时间"和"状态"列
+        self.headers = ["ID", "URL", "开始时间", "完成时间", "结果"]
 
     def rowCount(self, parent=QModelIndex()):
         return len(self.tasks)
@@ -46,21 +50,17 @@ class TaskTableModel(QAbstractTableModel):
             if column == 0:
                 return task.id
             elif column == 1:
-                # 截断过长的URL
-                return task.url[:50] + "..." if len(task.url) > 50 else task.url
+                # 增加URL显示长度
+                return task.url[:70] + "..." if len(task.url) > 70 else task.url
             elif column == 2:
-                return task.status
-            elif column == 3:
-                return task.created_at
-            elif column == 4:
                 return task.started_at or ""
-            elif column == 5:
+            elif column == 3:
                 return task.completed_at or ""
-            elif column == 6:
+            elif column == 4:
                 # 截断过长的结果
                 return task.result[:50] + "..." if len(task.result) > 50 else task.result
 
-        # 根据状态设置不同的背景颜色
+        # 根据状态设置不同的背景颜色（保留状态的视觉提示）
         if role == Qt.BackgroundRole:
             if task.status == "待处理":
                 return Qt.lightGray
