@@ -34,7 +34,8 @@ class ConfigUtils:
             "video_volume": 1.0,
             "output_resolution": "1080p",
             "max_workers": 1,
-            "max_retries": 3
+            "max_retries": 3,
+            "auto_publish_platforms":[]
         }
 
     @staticmethod
@@ -101,6 +102,9 @@ class ConfigUtils:
         summary_text += "● 添加字幕: {}, 加速倍数: {}\n".format(
             "是" if config.get("add_subtitles", True) else "否",
             config.get("speed_factor", 1.00)
+        )
+        summary_text += "● 自动发布: {},\n".format(
+            config.get("auto_publish_platforms", "无")
         )
 
         return summary_text

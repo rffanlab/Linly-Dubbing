@@ -2,9 +2,11 @@ import os
 import threading
 import datetime
 import json
+import time
+
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
                                QPushButton, QMessageBox, QSplitter, QProgressBar,
-                               QTextEdit, QFileDialog, QTableView, QHeaderView)
+                               QTextEdit, QFileDialog, QTableView, QHeaderView, QGroupBox, QCheckBox)
 from PySide6.QtCore import QTimer, Qt, Signal, QObject
 
 from task_manager import TaskManager, Task, TaskTableModel
@@ -18,6 +20,7 @@ from config_utils import ConfigUtils
 # 尝试导入实际的功能模块
 try:
     from tools.do_everything import do_everything
+    from platform_publisher import MultiPlatformPublisher  # 导入发布模块
 
     DISABLE_PROCESSING = False  # 已经能够导入实际处理模块
 except ImportError:
@@ -115,6 +118,20 @@ class FullAutoTab(QWidget):
         local_video_layout = QHBoxLayout()
         local_video_layout.addWidget(self.select_video_button)
         self.left_layout.addLayout(local_video_layout)
+
+        # 自动发布平台选择
+        self.auto_publish_group = QGroupBox("自动发布平台")
+        self.auto_publish_layout = QVBoxLayout()
+
+        # 添加各平台复选框
+        self.platform_checkboxes = {}
+        for platform in ["哔哩哔哩", "今日头条", "抖音", "快手"]:
+            checkbox = QCheckBox(platform)
+            self.platform_checkboxes[platform] = checkbox
+            self.auto_publish_layout.addWidget(checkbox)
+
+        self.auto_publish_group.setLayout(self.auto_publish_layout)
+        self.left_layout.addWidget(self.auto_publish_group)
 
         # 配置信息
         self.config_summary = QTextEdit()
@@ -439,6 +456,14 @@ class FullAutoTab(QWidget):
         # 开始处理
         self.run_process(task_id=task.id)
 
+    def get_selected_platforms(self):
+        """获取选中的自动发布平台"""
+        selected_platforms = []
+        for platform, checkbox in self.platform_checkboxes.items():
+            if checkbox.isChecked():
+                selected_platforms.append(platform)
+        return selected_platforms
+
     def process_thread(self, task_id=None):
         """异步处理线程"""
         config = self.config or {}
@@ -451,6 +476,13 @@ class FullAutoTab(QWidget):
             self.signals.log.emit(f"视频文件夹: {config.get('video_folder', 'videos')}")
             self.signals.log.emit(f"视频URL: {url}")
             self.signals.log.emit(f"分辨率: {config.get('resolution', '1080p')}")
+
+            # 获取选中的自动发布平台
+            auto_publish_platforms = self.get_selected_platforms()
+            if auto_publish_platforms:
+                self.signals.log.emit(f"自动发布平台: {', '.join(auto_publish_platforms)}")
+            else:
+                self.signals.log.emit("未启用自动发布")
 
             # 更详细的参数记录
             self.signals.log.emit("-" * 50)
@@ -471,36 +503,44 @@ class FullAutoTab(QWidget):
                 self.signals.progress.emit(percent, status)
 
             # 实际的处理调用
-            result, video_path = do_everything(
-                config.get('video_folder', 'videos'),
-                url,
-                config.get('video_count', 5),
-                config.get('resolution', '1080p'),
-                config.get('model', 'htdemucs_ft'),
-                config.get('device', 'auto'),
-                config.get('shifts', 5),
-                config.get('asr_model', 'WhisperX'),
-                config.get('whisperx_size', 'large'),
-                config.get('batch_size', 32),
-                config.get('separate_speakers', True),
-                config.get('min_speakers', None),
-                config.get('max_speakers', None),
-                config.get('translation_method', 'LLM'),
-                config.get('target_language_translation', '简体中文'),
-                config.get('tts_method', 'EdgeTTS'),
-                config.get('target_language_tts', '中文'),
-                config.get('edge_tts_voice', 'zh-CN-XiaoxiaoNeural'),
-                config.get('add_subtitles', True),
-                config.get('speed_factor', 1.00),
-                config.get('frame_rate', 30),
-                config.get('background_music', None),
-                config.get('bg_music_volume', 0.5),
-                config.get('video_volume', 1.0),
-                config.get('output_resolution', '1080p'),
-                config.get('max_workers', 1),
-                config.get('max_retries', 3),
-                progress_callback
-            )
+            if DISABLE_PROCESSING:
+                # 模拟处理结果
+                self.signals.log.emit("模拟处理模式，不进行实际处理")
+                time.sleep(2)
+                result = "模拟处理完成"
+                video_path = ""
+            else:
+                result, video_path = do_everything(
+                    config.get('video_folder', 'videos'),
+                    url,
+                    config.get('video_count', 5),
+                    config.get('resolution', '1080p'),
+                    config.get('model', 'htdemucs_ft'),
+                    config.get('device', 'auto'),
+                    config.get('shifts', 5),
+                    config.get('asr_model', 'WhisperX'),
+                    config.get('whisperx_size', 'large'),
+                    config.get('batch_size', 32),
+                    config.get('separate_speakers', True),
+                    config.get('min_speakers', None),
+                    config.get('max_speakers', None),
+                    config.get('translation_method', 'LLM'),
+                    config.get('target_language_translation', '简体中文'),
+                    config.get('tts_method', 'EdgeTTS'),
+                    config.get('target_language_tts', '中文'),
+                    config.get('edge_tts_voice', 'zh-CN-XiaoxiaoNeural'),
+                    config.get('add_subtitles', True),
+                    config.get('speed_factor', 1.00),
+                    config.get('frame_rate', 30),
+                    config.get('background_music', None),
+                    config.get('bg_music_volume', 0.5),
+                    config.get('video_volume', 1.0),
+                    config.get('output_resolution', '1080p'),
+                    config.get('max_workers', 1),
+                    config.get('max_retries', 3),
+                    progress_callback,
+                    auto_publish_platforms  # 传递自动发布平台参数
+                )
 
             # 完成处理，设置100%进度
             self.signals.progress.emit(100, "处理完成!")
@@ -570,6 +610,13 @@ class FullAutoTab(QWidget):
         self.append_log("-" * 50)
         self.append_log(f"开始处理 - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         self.append_log(f"视频URL: {self.video_url.text()}")
+
+        # 记录自动发布平台
+        selected_platforms = self.get_selected_platforms()
+        if selected_platforms:
+            self.append_log(f"自动发布平台: {', '.join(selected_platforms)}")
+        else:
+            self.append_log("未启用自动发布")
 
         if DISABLE_PROCESSING:
             # 模拟处理过程

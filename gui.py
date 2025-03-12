@@ -6,6 +6,9 @@
 
 import sys
 import os
+import traceback
+
+from publish_tab import PublishTab
 
 # 设置环境变量，可能有助于解决一些库加载问题
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
@@ -89,7 +92,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle("简化版本 - Linly-Dubbing")
+        self.setWindowTitle("Linly-Dubbing")
         self.resize(1440, 900)
 
         try:
@@ -101,6 +104,8 @@ class MainWindow(QMainWindow):
             self.full_auto_tab = FullAutoTab()
             print("创建SettingsTab实例...")
             self.settings_tab = SettingsTab()
+            print("创建PublishTab实例...")
+            self.publish_tab = PublishTab()  # 添加发布标签页
 
             # 如果可能，连接配置页面的配置变更信号
             if hasattr(self.settings_tab, 'config_changed') and self.settings_tab.config_changed is not None:
@@ -113,12 +118,14 @@ class MainWindow(QMainWindow):
 
             # 添加选项卡
             self.tab_widget.addTab(self.full_auto_tab, "一键自动化 One-Click")
+            self.tab_widget.addTab(self.publish_tab, "视频发布 Publish")  # 添加发布标签页
             self.tab_widget.addTab(self.settings_tab, "配置页面 Settings")
 
             # 设置中央窗口部件
             self.setCentralWidget(self.tab_widget)
             print("窗口设置完成")
         except Exception as e:
+            traceback.print_exc()
             print(f"窗口创建失败: {e}")
             # 显示错误信息
             central_widget = QWidget()

@@ -1,8 +1,9 @@
 import os
 import json
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea,
-                               QPushButton, QMessageBox, QSplitter, QComboBox,
-                               QFormLayout, QFileDialog, QLineEdit)
+import datetime
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
+                               QPushButton, QMessageBox, QSplitter, QComboBox, QCheckBox,
+                               QFormLayout, QFileDialog, QTextEdit, QGroupBox, QScrollArea)
 from PySide6.QtCore import Qt, Signal
 
 from ui_components import (CustomSlider, FloatSlider, AudioSelector, VideoPlayer)
@@ -99,6 +100,43 @@ class DropdownSelector(QWidget):
             if self.comboBox.itemData(i) == value:
                 self.comboBox.setCurrentIndex(i)
                 return
+
+
+class MultiCheckBox(QWidget):
+    """多选框组件，支持多项选择"""
+
+    def __init__(self, options, label, default_values=None, parent=None):
+        super().__init__(parent)
+        self.layout = QVBoxLayout(self)
+        self.group_box = QGroupBox(label)
+        self.button_layout = QVBoxLayout()
+
+        # 如果未提供默认值，则默认为空列表
+        if default_values is None:
+            default_values = []
+
+        self.checkboxes = {}
+        for option in options:
+            checkbox = QCheckBox(option)
+            checkbox.setChecked(option in default_values)
+            self.checkboxes[option] = checkbox
+            self.button_layout.addWidget(checkbox)
+
+        self.group_box.setLayout(self.button_layout)
+        self.layout.addWidget(self.group_box)
+        self.setLayout(self.layout)
+
+    def value(self):
+        """返回所有被选中的选项列表"""
+        return [option for option, checkbox in self.checkboxes.items() if checkbox.isChecked()]
+
+    def setValue(self, values):
+        """设置选中的选项"""
+        if not isinstance(values, list):
+            values = [values]  # 确保是列表
+
+        for option, checkbox in self.checkboxes.items():
+            checkbox.setChecked(option in values)
 
 
 class SettingsTab(QWidget):
@@ -295,6 +333,14 @@ class SettingsTab(QWidget):
         self.add_subtitles = DropdownSelector([True, False], "", True)
         synthesis_form.addRow("添加字幕:", self.add_subtitles)
 
+        # 添加自动发布平台多选框
+        self.auto_publish_platforms = MultiCheckBox(
+            ["哔哩哔哩", "今日头条", "抖音", "快手"],
+            "",
+            []  # 默认不选中任何平台
+        )
+        synthesis_form.addRow("自动发布平台:", self.auto_publish_platforms)
+
         # 加速倍数
         self.speed_factor = FloatSlider(0.5, 2, 0.05, "", 1.00)
         synthesis_form.addRow("加速倍数:", self.speed_factor)
@@ -378,7 +424,8 @@ class SettingsTab(QWidget):
             "video_volume": self.video_volume.value(),
             "output_resolution": self.output_resolution.value(),
             "max_workers": self.max_workers.value(),
-            "max_retries": self.max_retries.value()
+            "max_retries": self.max_retries.value(),
+            "auto_publish_platforms": self.auto_publish_platforms.value()
         }
         return config
 
@@ -418,6 +465,10 @@ class SettingsTab(QWidget):
             self.output_resolution.setValue(config.get("output_resolution", "1080p"))
             self.max_workers.setValue(config.get("max_workers", 1))
             self.max_retries.setValue(config.get("max_retries", 3))
+
+            # 设置自动发布平台
+            if "auto_publish_platforms" in config:
+                self.auto_publish_platforms.setValue(config.get("auto_publish_platforms", []))
 
         except Exception as e:
             QMessageBox.warning(self, "配置加载错误", f"加载配置时出错: {str(e)}")
@@ -483,7 +534,8 @@ class SettingsTab(QWidget):
                 "video_volume": 1.0,
                 "output_resolution": "1080p",
                 "max_workers": 1,
-                "max_retries": 3
+                "max_retries": 3,
+                "auto_publish_platforms": []
             }
             self.apply_config(default_config)
             QMessageBox.information(self, "重置成功", "所有配置已重置为默认值")

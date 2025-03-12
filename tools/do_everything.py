@@ -5,17 +5,18 @@ import traceback
 
 import torch
 from loguru import logger
-from .step000_video_downloader import get_info_list_from_url, download_single_video, get_target_folder
-from .step010_demucs_vr import separate_all_audio_under_folder, init_demucs, release_model
-from .step020_asr import transcribe_all_audio_under_folder
-from .step021_asr_whisperx import init_whisperx, init_diarize
-from .step022_asr_funasr import init_funasr
-from .step030_translation import translate_all_transcript_under_folder
-from .step040_tts import generate_all_wavs_under_folder
-from .step042_tts_xtts import init_TTS
-from .step043_tts_cosyvoice import init_cosyvoice
-from .step050_synthesize_video import synthesize_all_video_under_folder
+from tools.step000_video_downloader import get_info_list_from_url, download_single_video, get_target_folder
+from tools.step010_demucs_vr import separate_all_audio_under_folder, init_demucs, release_model
+from tools.step020_asr import transcribe_all_audio_under_folder
+from tools.step021_asr_whisperx import init_whisperx, init_diarize
+from tools.step022_asr_funasr import init_funasr
+from tools.step030_translation import translate_all_transcript_under_folder
+from tools.step040_tts import generate_all_wavs_under_folder
+from tools.step042_tts_xtts import init_TTS
+from tools.step043_tts_cosyvoice import init_cosyvoice
+from tools.step050_synthesize_video import synthesize_all_video_under_folder
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from platform_publisher import MultiPlatformPublisher
 
 # 跟踪模型初始化状态
 models_initialized = {
@@ -263,12 +264,14 @@ def do_everything(root_folder, url, num_videos=5, resolution='1080p',
                   tts_method='xtts', tts_target_language='中文', voice='zh-CN-XiaoxiaoNeural',
                   subtitles=True, speed_up=1.00, fps=30,
                   background_music=None, bgm_volume=0.5, video_volume=1.0, target_resolution='1080p',
-                  max_workers=3, max_retries=5, progress_callback=None):
+                  max_workers=3, max_retries=5, progress_callback=None,
+                  auto_publish_platforms=None):  # 添加自动发布平台参数
     """
-    处理整个视频处理流程，增加了进度回调函数
+    处理整个视频处理流程，增加了进度回调函数和自动发布功能
 
     Args:
         progress_callback: 回调函数，用于报告进度和状态，格式为 progress_callback(progress_percent, status_message)
+        auto_publish_platforms: 自动发布平台列表，例如 ["哔哩哔哩", "今日头条"]
     """
     try:
         success_list = []
@@ -284,6 +287,8 @@ def do_everything(root_folder, url, num_videos=5, resolution='1080p',
         logger.info(f"翻译: 方法={translation_method}, 目标语言={translation_target_language}")
         logger.info(f"语音合成: 方法={tts_method}, 目标语言={tts_target_language}, 声音={voice}")
         logger.info(f"视频合成: 字幕={subtitles}, 速度={speed_up}, FPS={fps}, 分辨率={target_resolution}")
+        if auto_publish_platforms:
+            logger.info(f"自动发布平台: {auto_publish_platforms}")
         logger.info("-" * 50)
 
         url = url.replace(' ', '').replace('，', '\n').replace(',', '\n')
@@ -338,6 +343,49 @@ def do_everything(root_folder, url, num_videos=5, resolution='1080p',
 
                 if success:
                     logger.info(f"视频处理成功: {new_file_path}")
+
+                    # 处理自动发布（如果需要）
+                    if auto_publish_platforms and output_video and os.path.exists(output_video):
+                        try:
+                            # 获取视频摘要信息
+                            summary_path = os.path.join(os.path.dirname(output_video), "summary.json")
+                            if os.path.exists(summary_path):
+                                with open(summary_path, "r", encoding="utf-8") as f:
+                                    summary = json.load(f)
+
+                                # 进行发布操作
+                                if progress_callback:
+                                    progress_callback(95, "正在发布视频到选定平台...")
+
+                                publisher = MultiPlatformPublisher()
+                                results = publisher.publish_to_platforms(
+                                    platforms=auto_publish_platforms,
+                                    video_path=output_video,
+                                    title=summary.get("title", os.path.basename(output_video)),
+                                    tags=summary.get("tags", []),
+                                    description=summary.get("summary", ""),
+                                    category="知识"  # 默认分类
+                                )
+
+                                # 保存发布结果
+                                publisher.save_results("publish_results.json")
+
+                                # 生成发布结果消息
+                                success_count = publisher.get_success_count()
+                                fail_count = publisher.get_fail_count()
+                                publish_msg = f"自动发布完成: 成功 {success_count}, 失败 {fail_count}"
+
+                                if progress_callback:
+                                    progress_callback(100, "处理完成，并已发布到选定平台!")
+
+                                return '处理成功 ' + publish_msg, output_video
+
+                        except Exception as e:
+                            logger.error(f"自动发布视频失败: {str(e)}")
+                            if progress_callback:
+                                progress_callback(100, "处理完成，但自动发布失败!")
+                            return f'处理成功，但自动发布失败: {str(e)}', output_video
+
                     return '处理成功', output_video
                 else:
                     logger.error(f"视频处理失败: {new_file_path}, 错误: {error_msg}")
@@ -375,6 +423,34 @@ def do_everything(root_folder, url, num_videos=5, resolution='1080p',
                             success_list.append(info)
                             out_video = output_video
                             logger.info(f"成功处理视频: {info['title'] if isinstance(info, dict) else info}")
+
+                            # 处理自动发布（如果需要）
+                            if auto_publish_platforms and output_video and os.path.exists(output_video):
+                                try:
+                                    # 获取视频摘要信息
+                                    summary_path = os.path.join(os.path.dirname(output_video), "summary.json")
+                                    if os.path.exists(summary_path):
+                                        with open(summary_path, "r", encoding="utf-8") as f:
+                                            summary = json.load(f)
+
+                                        # 进行发布操作
+                                        if progress_callback:
+                                            progress_callback(95, "正在发布视频到选定平台...")
+
+                                        publisher = MultiPlatformPublisher()
+                                        results = publisher.publish_to_platforms(
+                                            platforms=auto_publish_platforms,
+                                            video_path=output_video,
+                                            title=summary.get("title", os.path.basename(output_video)),
+                                            tags=summary.get("tags", []),
+                                            description=summary.get("summary", ""),
+                                            category="知识"  # 默认分类
+                                        )
+
+                                        # 保存发布结果
+                                        publisher.save_results("publish_results.json")
+                                except Exception as e:
+                                    logger.error(f"自动发布视频失败: {str(e)}")
                         else:
                             fail_list.append(info)
                             error_details.append(f"{info['title'] if isinstance(info, dict) else info}: {error_msg}")
@@ -399,7 +475,11 @@ def do_everything(root_folder, url, num_videos=5, resolution='1080p',
             for detail in error_details:
                 logger.info(f"  - {detail}")
 
-        return f'成功: {len(success_list)}\n失败: {len(fail_list)}', out_video
+        # 如果有自动发布，添加到结果消息中
+        if auto_publish_platforms and success_list:
+            return f'成功: {len(success_list)}, 失败: {len(fail_list)}, 已尝试发布到: {", ".join(auto_publish_platforms)}', out_video
+        else:
+            return f'成功: {len(success_list)}\n失败: {len(fail_list)}', out_video
 
     except Exception as e:
         # 捕获整体处理过程中的任何错误
