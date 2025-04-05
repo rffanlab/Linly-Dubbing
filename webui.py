@@ -32,7 +32,7 @@ full_auto_interface = gr.Interface(
         gr.Dropdown(['OpenAI', 'LLM', 'Google Translate', 'Bing Translate', 'Ernie'], label='翻译方式', value='LLM'),
         gr.Dropdown(['简体中文', '繁体中文', 'English', 'Cantonese', 'Japanese', 'Korean'], label='目标语言', value='简体中文'),
 
-        gr.Dropdown(['xtts', 'cosyvoice', 'EdgeTTS'], label='AI语音生成方法', value='xtts'),
+        gr.Dropdown(['xtts', 'cosyvoice', 'EdgeTTS','SparkTTS'], label='AI语音生成方法', value='xtts'),
         gr.Dropdown(['中文', 'English', '粤语', 'Japanese', 'Korean', 'Spanish', 'French'], label='目标语言', value='中文'),
         gr.Dropdown(SUPPORT_VOICE, value='zh-CN-XiaoxiaoNeural', label='EdgeTTS声音选择'),
 

@@ -301,7 +301,7 @@ class SettingsTab(QWidget):
         tts_form.setVerticalSpacing(4)
 
         # AI语音生成方法
-        self.tts_method = DropdownSelector(['xtts', 'cosyvoice', 'EdgeTTS'], "", 'EdgeTTS')
+        self.tts_method = DropdownSelector(['xtts', 'cosyvoice', 'EdgeTTS','SparkTTS'], "", 'EdgeTTS')
         tts_form.addRow("TTS方法:", self.tts_method)
 
         # 目标语言 (TTS)

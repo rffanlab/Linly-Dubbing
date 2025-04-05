@@ -8,9 +8,10 @@ import numpy as np
 
 from .utils import save_wav, save_wav_norm
 # from .step041_tts_bytedance import tts as bytedance_tts
-from .step042_tts_xtts import tts as xtts_tts
-from .step043_tts_cosyvoice import tts as cosyvoice_tts
-from .step044_tts_edge_tts import tts as edge_tts
+from tools.step042_tts_xtts import tts as xtts_tts
+from tools.step043_tts_cosyvoice import tts as cosyvoice_tts
+from tools.step044_tts_edge_tts import tts as edge_tts
+from tools.step045_tts_spark_tts import tts as SparkTTS
 from .cn_tx import TextNorm
 from audiostretchy.stretch import stretch_audio
 normalizer = TextNorm()
@@ -89,6 +90,9 @@ def generate_wavs(method, folder, target_language='中文', voice = 'zh-CN-Xiaox
             cosyvoice_tts(text, output_path, speaker_wav, target_language = target_language)
         elif method == 'EdgeTTS':
             edge_tts(text, output_path, target_language = target_language, voice = voice)
+        elif method == 'SparkTTS':
+            # SparkTTS(text, output_path, target_language = target_language, voice = voice)
+            SparkTTS(text, output_path, speaker_wav,target_language = target_language)
         start = line['start']
         end = line['end']
         length = end-start
