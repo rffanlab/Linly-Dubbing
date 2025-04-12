@@ -1,706 +1,744 @@
 import os
-import threading
 import datetime
 import json
 import time
+import faulthandler
+from typing import Optional, List, Dict, Any
+from functools import partial
 
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-                               QPushButton, QMessageBox, QSplitter, QProgressBar,
-                               QTextEdit, QFileDialog, QTableView, QHeaderView, QGroupBox, QCheckBox)
-from PySide6.QtCore import QTimer, Qt, Signal, QObject
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
+    QPushButton, QMessageBox, QSplitter, QProgressBar,
+    QTextEdit, QFileDialog, QTableView, QHeaderView,
+    QGroupBox, QCheckBox, QSizePolicy
+)
+from PySide6.QtCore import QTimer, Qt, Signal, QObject, QThread, QSize, SignalInstance
+from PySide6.QtGui import QIcon
 
-from task_manager import TaskManager, Task, TaskTableModel
-from ui_components import VideoPlayer
+# 启用故障处理
+faulthandler.enable()
 
-# Import utility modules
-from task_utils import TaskUtils
-from ui_utils import UIUtils
-from config_utils import ConfigUtils
-
-# 尝试导入实际的功能模块
+# 尝试导入实际功能模块
 try:
     from tools.do_everything import do_everything
-    from platform_publisher import MultiPlatformPublisher  # 导入发布模块
+    from platform_publisher import MultiPlatformPublisher
 
-    DISABLE_PROCESSING = False  # 已经能够导入实际处理模块
+    DISABLE_PROCESSING = False
 except ImportError:
     print("警告: 无法导入处理模块，将使用模拟处理")
-    DISABLE_PROCESSING = True  # 无法导入实际处理模块，使用模拟处理
+    DISABLE_PROCESSING = True
 
-# 尝试导入SUPPORT_VOICE
 try:
-    from tools.utils import SUPPORT_VOICE
-except ImportError:
-    # 定义临时的支持语音列表
-    SUPPORT_VOICE = ['zh-CN-XiaoxiaoNeural', 'zh-CN-YunxiNeural',
-                     'en-US-JennyNeural', 'ja-JP-NanamiNeural']
+    from task_manager import TaskManager, Task, TaskTableModel
+    from ui_components import VideoPlayer
+    from task_utils import TaskUtils
+    from ui_utils import UIUtils
+    from config_utils import ConfigUtils
+except ImportError as e:
+    print(f"导入错误: {e}")
+    raise
 
 
-# 创建一个信号类用于线程通信
 class WorkerSignals(QObject):
-    finished = Signal(str, str)  # 完成信号：状态, 视频路径
-    progress = Signal(int, str)  # 进度信号：百分比, 状态信息
-    log = Signal(str)  # 日志信号：日志文本
-
-
-class FullAutoTab(QWidget):
-    """一键自动化标签页"""
+    """
+    自定义信号类，用于线程与主线程通信
+    """
+    finished = Signal(str, str)  # status, video_path
+    progress = Signal(int, str)  # percent, message
+    log = Signal(str)  # log message
+    error = Signal(str)  # error message
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._active = True
 
-        # 初始化UI
-        self.setup_ui()
+    def safe_emit(self, signal, *args):
+        """线程安全的信号发射方法"""
+        if not self._active:
+            return
+        try:
+            # 确保是有效的信号实例
+            if not isinstance(signal, SignalInstance):
+                raise TypeError("参数不是有效的信号实例")
 
-        # 存储生成的视频路径
-        self.generated_video_path = None
+            # 正确获取信号的元方法
+            meta_method = signal.signal.metaMethod()
 
-        # 当前任务ID
-        self.current_task_id = None
+            # 检查信号是否连接
+            if self.isSignalConnected(meta_method):
+                signal.emit(*args)
+        except RuntimeError as e:
+            print(f"运行时错误: {e}")
+            self._active = False
+        except (AttributeError, TypeError) as e:
+            print(f"信号处理错误: {e}")
+            self._active = False
 
-        # 进度
-        self.current_progress = 0
 
-        # 创建任务管理器
-        self.task_manager = TaskManager()
+class ProcessingThread(QThread):
+    """
+    处理线程类，继承自QThread
+    """
 
-        # 加载配置
-        self.config = ConfigUtils.load_config(append_log_func=self.append_log)
+    def __init__(self, task_id: Optional[str], config: dict, video_url: str,
+                 platform_checkboxes: Dict[str, QCheckBox], signals: WorkerSignals, parent=None):
+        super().__init__(parent)
+        self.task_id = task_id
+        self.config = config
+        self.video_url = video_url
+        self.platform_checkboxes = platform_checkboxes
+        self.signals = signals
+        self._stopped = False
 
-        # 更新配置摘要
-        self.update_config_summary()
+    def run(self):
+        """线程主逻辑"""
+        try:
+            self.signals.safe_emit(self.signals.log, "=" * 50)
+            self.signals.safe_emit(self.signals.log, f"开始处理任务 {self.task_id or ''}")
+            self.signals.safe_emit(self.signals.log, f"视频URL: {self.video_url}")
+            self.signals.safe_emit(self.signals.progress, 0, "初始化处理...")
 
-        # 加载任务数据
-        self.task_model = TaskUtils.load_tasks(
-            self.task_manager, self.task_table, TaskTableModel, self.append_log)
+            # 获取选中的发布平台
+            selected_platforms = []
+            for platform, checkbox in self.platform_checkboxes.items():
+                if checkbox.isChecked():
+                    selected_platforms.append(platform)
 
-        # 处理线程
-        self.worker_thread = None
+            if DISABLE_PROCESSING:
+                # 模拟处理流程
+                for i in range(1, 101):
+                    if self._stopped:
+                        break
+                    time.sleep(0.05)
+                    progress_msg = f"模拟进度 {i}%"
+                    if i < 20:
+                        progress_msg = "下载视频..."
+                    elif i < 40:
+                        progress_msg = "人声分离..."
+                    elif i < 60:
+                        progress_msg = "语音识别..."
+                    elif i < 80:
+                        progress_msg = "字幕翻译..."
+                    elif i < 100:
+                        progress_msg = "视频合成..."
+
+                    self.signals.safe_emit(self.signals.progress, i, progress_msg)
+
+                result = "模拟处理完成"
+                video_path = os.path.abspath("sample_output.mp4") if not self._stopped else ""
+            else:
+                # 实际处理流程
+                result, video_path = do_everything(
+                    video_folder=self.config.get('video_folder', 'videos'),
+                    url=self.video_url,
+                    # 其他配置参数...
+                    progress_callback=self.update_progress,
+                    auto_publish_platforms=selected_platforms
+                )
+
+            if not self._stopped:
+                self.signals.safe_emit(self.signals.finished, result, video_path)
+            else:
+                self.signals.safe_emit(self.signals.finished, "处理已取消", "")
+
+        except Exception as e:
+            import traceback
+            error_msg = f"处理失败: {str(e)}\n{traceback.format_exc()}"
+            self.signals.safe_emit(self.signals.error, error_msg)
+            self.signals.safe_emit(self.signals.finished, f"处理失败: {str(e)}", "")
+
+    def update_progress(self, percent: int, message: str):
+        """更新进度回调"""
+        if not self._stopped:
+            self.signals.safe_emit(self.signals.progress, percent, message)
+            self.signals.safe_emit(self.signals.log, f"进度 {percent}%: {message}")
+
+    def stop(self):
+        """停止处理"""
+        self._stopped = True
+        self.signals.safe_emit(self.signals.log, "正在停止处理...")
+
+
+class FullAutoTab(QWidget):
+    """
+    一键自动化处理标签页
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._init_variables()
+        self._setup_ui()
+        self._setup_connections()
+        self._load_resources()
+        self._init_state()
+
+    def _init_variables(self):
+        """初始化变量"""
         self._processing = False
-        self.signals = WorkerSignals()
-        self.signals.finished.connect(self.process_finished)
-        self.signals.progress.connect(self.update_progress)
-        self.signals.log.connect(self.append_log)
+        self.generated_video_path = None
+        self.current_task_id = None
+        self.current_progress = 0
+        self.processing_thread = None
+        self.platform_checkboxes = {}
 
-        # 进度步骤
-        self.progress_steps = [
-            "下载视频...", "人声分离...", "AI智能语音识别...",
-            "字幕翻译...", "AI语音合成...", "视频合成..."
-        ]
-        self.current_step = 0
-
-        # 初始化日志
-        self.append_log("系统初始化完成，准备就绪")
-
-        # 检查任务
-        QTimer.singleShot(1000, self.check_pending_tasks)
-
-    def setup_ui(self):
+    def _setup_ui(self):
         """设置用户界面"""
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        # 主布局
         self.main_layout = QHBoxLayout(self)
+        self.main_layout.setContentsMargins(10, 10, 10, 10)
+        self.main_layout.setSpacing(10)
 
-        # 左侧配置区域
-        self.left_widget = QWidget()
-        self.left_layout = QVBoxLayout(self.left_widget)
+        # 左侧面板 - 配置区域
+        self.left_panel = QWidget()
+        self.left_panel.setMinimumWidth(400)
+        self.left_layout = QVBoxLayout(self.left_panel)
+        self.left_layout.setContentsMargins(5, 5, 5, 5)
 
-        # URL输入
-        self.video_url_label = QLabel("视频URL")
+        # URL输入区域
+        self._setup_url_input()
+
+        # 自动发布平台选择
+        self._setup_platform_selection()
+
+        # 配置摘要
+        self._setup_config_summary()
+
+        # 任务列表
+        self._setup_task_list()
+
+        # 右侧面板 - 操作和预览区域
+        self.right_panel = QWidget()
+        self.right_layout = QVBoxLayout(self.right_panel)
+        self.right_layout.setContentsMargins(5, 5, 5, 5)
+
+        # 操作按钮
+        self._setup_action_buttons()
+
+        # 进度条
+        self._setup_progress_bar()
+
+        # 分割器（视频预览和日志）
+        self._setup_splitter()
+
+        # 将左右面板添加到主布局
+        self.main_layout.addWidget(self.left_panel)
+        self.main_layout.addWidget(self.right_panel)
+
+    def _setup_url_input(self):
+        """设置URL输入区域"""
+        url_group = QGroupBox("视频输入")
+        url_layout = QVBoxLayout(url_group)
+
+        self.video_url_label = QLabel("视频URL:")
         self.video_url = QLineEdit()
         self.video_url.setPlaceholderText("请输入视频URL或选择本地视频文件")
 
-        # 本地视频选择
         self.select_video_button = QPushButton("选择本地视频")
-        self.select_video_button.clicked.connect(self.select_local_video)
+        self.select_video_button.setIcon(QIcon.fromTheme("folder-open"))
 
-        self.left_layout.addWidget(self.video_url_label)
-        self.left_layout.addWidget(self.video_url)
+        url_layout.addWidget(self.video_url_label)
+        url_layout.addWidget(self.video_url)
+        url_layout.addWidget(self.select_video_button)
 
-        local_video_layout = QHBoxLayout()
-        local_video_layout.addWidget(self.select_video_button)
-        self.left_layout.addLayout(local_video_layout)
+        self.left_layout.addWidget(url_group)
 
-        # 自动发布平台选择
+    def _setup_platform_selection(self):
+        """设置平台选择区域"""
         self.auto_publish_group = QGroupBox("自动发布平台")
-        self.auto_publish_layout = QVBoxLayout()
+        self.auto_publish_layout = QVBoxLayout(self.auto_publish_group)
 
-        # 添加各平台复选框
-        self.platform_checkboxes = {}
-        for platform in ["哔哩哔哩", "今日头条", "抖音", "快手"]:
+        platforms = ["哔哩哔哩", "今日头条", "抖音", "快手"]
+        for platform in platforms:
             checkbox = QCheckBox(platform)
             self.platform_checkboxes[platform] = checkbox
             self.auto_publish_layout.addWidget(checkbox)
 
-        self.auto_publish_group.setLayout(self.auto_publish_layout)
         self.left_layout.addWidget(self.auto_publish_group)
 
-        # 配置信息
+    def _setup_config_summary(self):
+        """设置配置摘要区域"""
+        self.config_summary_label = QLabel("当前配置摘要:")
         self.config_summary = QTextEdit()
         self.config_summary.setReadOnly(True)
         self.config_summary.setMaximumHeight(150)
 
-        self.config_summary_label = QLabel("当前配置摘要：")
         self.left_layout.addWidget(self.config_summary_label)
         self.left_layout.addWidget(self.config_summary)
 
-        # 任务列表
-        self.task_list_label = QLabel("任务列表：")
-        self.left_layout.addWidget(self.task_list_label)
-
+    def _setup_task_list(self):
+        """设置任务列表区域"""
+        self.task_list_label = QLabel("任务列表:")
         self.task_table = QTableView()
+        self.task_table.setSelectionBehavior(QTableView.SelectRows)
+        self.task_table.setAlternatingRowColors(True)
 
-        # 使用自定义列宽设置
-        header = self.task_table.horizontalHeader()
-        # 设置列的大小调整模式
-        header.setSectionResizeMode(QHeaderView.Interactive)  # 默认允许用户调整
-
-        # 表格数据加载后调整列宽
-        def adjust_column_widths():
-            if self.task_table.model():
-                # ID列固定宽度
-                self.task_table.setColumnWidth(0, 40)
-                # URL列拓宽，占用大部分空间
-                available_width = self.task_table.width() - 350  # 减去其他列的总宽度
-                self.task_table.setColumnWidth(1, max(200, available_width))
-                # 其他列固定宽度
-                self.task_table.setColumnWidth(2, 120)  # 开始时间
-                self.task_table.setColumnWidth(3, 120)  # 完成时间
-                self.task_table.setColumnWidth(4, 150)  # 结果
-
-                # 设置URL列自动拉伸
-                header.setSectionResizeMode(1, QHeaderView.Stretch)
-
-        # 添加表格大小变化事件处理
-        self.task_table.resizeEvent = lambda event: adjust_column_widths()
-
-        # 设置表格视图其他属性
-        self.task_table.setSelectionBehavior(QTableView.SelectRows)  # 整行选择
-        self.task_table.setAlternatingRowColors(True)  # 交替行颜色
-
-        self.left_layout.addWidget(self.task_table)
-
-        # 任务管理按钮
-        self.task_button_layout = QHBoxLayout()
-
+        # 任务操作按钮
+        task_button_layout = QHBoxLayout()
         self.add_task_button = QPushButton("添加任务")
-        self.add_task_button.clicked.connect(self.add_task)
-
         self.clear_tasks_button = QPushButton("清空任务")
-        self.clear_tasks_button.clicked.connect(self.clear_tasks)
 
-        self.task_button_layout.addWidget(self.add_task_button)
-        self.task_button_layout.addWidget(self.clear_tasks_button)
+        task_button_layout.addWidget(self.add_task_button)
+        task_button_layout.addWidget(self.clear_tasks_button)
 
-        self.left_layout.addLayout(self.task_button_layout)
+        self.left_layout.addWidget(self.task_list_label)
+        self.left_layout.addWidget(self.task_table)
+        self.left_layout.addLayout(task_button_layout)
 
-        # 右侧区域
-        self.right_widget = QWidget()
-        self.right_layout = QVBoxLayout(self.right_widget)
-        self.right_layout.setContentsMargins(10, 10, 10, 10)  # 设置合理的边距
-        self.right_layout.setSpacing(10)  # 控件之间的间距
+    def _setup_action_buttons(self):
+        """设置操作按钮区域"""
+        button_layout = QHBoxLayout()
 
-        # 执行按钮区域
-        self.button_layout = QHBoxLayout()
-
-        # 一键处理按钮
         self.run_button = QPushButton("一键处理")
-        self.run_button.clicked.connect(self.process_url_then_tasks)
-        self.run_button.setMinimumHeight(50)
+        self.run_button.setIcon(QIcon.fromTheme("media-playback-start"))
         self.run_button.setStyleSheet("background-color: #4CAF50; color: white;")
+        self.run_button.setMinimumHeight(50)
 
-        # 添加开始任务按钮
         self.start_tasks_button = QPushButton("开始任务")
-        self.start_tasks_button.clicked.connect(self.start_processing_tasks)
-        self.start_tasks_button.setMinimumHeight(50)
+        self.start_tasks_button.setIcon(QIcon.fromTheme("media-seek-forward"))
         self.start_tasks_button.setStyleSheet("background-color: #2196F3; color: white;")
+        self.start_tasks_button.setMinimumHeight(50)
 
-        # 停止处理按钮
         self.stop_button = QPushButton("停止处理")
-        self.stop_button.clicked.connect(self.stop_process)
+        self.stop_button.setIcon(QIcon.fromTheme("media-playback-stop"))
+        self.stop_button.setStyleSheet("background-color: #F44336; color: white;")
         self.stop_button.setMinimumHeight(50)
-        self.stop_button.setEnabled(False)  # 初始禁用
+        self.stop_button.setEnabled(False)
 
-        # 预览按钮
         self.preview_button = QPushButton("预览视频")
-        self.preview_button.clicked.connect(self.preview_video)
+        self.preview_button.setIcon(QIcon.fromTheme("media-playback-start"))
         self.preview_button.setMinimumHeight(50)
         self.preview_button.setEnabled(False)
 
-        # 打开文件夹按钮
-        self.open_folder_button = QPushButton("打开所在目录")
-        self.open_folder_button.clicked.connect(self.open_folder)
+        self.open_folder_button = QPushButton("打开目录")
+        self.open_folder_button.setIcon(QIcon.fromTheme("folder-open"))
         self.open_folder_button.setMinimumHeight(50)
         self.open_folder_button.setEnabled(False)
 
-        self.button_layout.addWidget(self.run_button)
-        self.button_layout.addWidget(self.start_tasks_button)
-        self.button_layout.addWidget(self.stop_button)
-        self.button_layout.addWidget(self.open_folder_button)
-        self.button_layout.addWidget(self.preview_button)
-        self.right_layout.addLayout(self.button_layout)
+        button_layout.addWidget(self.run_button)
+        button_layout.addWidget(self.start_tasks_button)
+        button_layout.addWidget(self.stop_button)
+        button_layout.addWidget(self.preview_button)
+        button_layout.addWidget(self.open_folder_button)
 
-        # 进度条
-        self.progress_layout = QVBoxLayout()
-        self.progress_label = QLabel("准备就绪")
+        self.right_layout.addLayout(button_layout)
+
+    def _setup_progress_bar(self):
+        """设置进度条区域"""
+        progress_group = QGroupBox("处理进度")
+        progress_layout = QVBoxLayout(progress_group)
+
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
+        self.progress_bar.setTextVisible(True)
 
-        self.progress_layout.addWidget(QLabel("处理进度:"))
-        self.progress_layout.addWidget(self.progress_bar)
-        self.progress_layout.addWidget(self.progress_label)
-        self.right_layout.addLayout(self.progress_layout)
+        self.progress_label = QLabel("准备就绪")
+        self.progress_label.setAlignment(Qt.AlignCenter)
 
-        # 状态显示
-        self.status_label = QLabel("准备就绪")
-        self.right_layout.addWidget(QLabel("处理状态:"))
-        self.right_layout.addWidget(self.status_label)
+        self.status_label = QLabel("空闲")
+        self.status_label.setAlignment(Qt.AlignCenter)
 
-        # 创建垂直分割器
-        self.right_splitter = QSplitter(Qt.Vertical)
+        progress_layout.addWidget(self.progress_bar)
+        progress_layout.addWidget(self.progress_label)
+        progress_layout.addWidget(self.status_label)
 
-        # 视频播放器容器
-        self.video_container = QWidget()
-        self.video_layout = QVBoxLayout(self.video_container)
-        self.video_layout.setContentsMargins(0, 0, 0, 0)  # 移除内边距
-        self.video_player = VideoPlayer("视频预览：")
-        self.video_player.setContentsMargins(0, 0, 0, 0)  # 移除内边距
-        self.video_layout.addWidget(self.video_player)
+        self.right_layout.addWidget(progress_group)
 
-        # 日志容器
-        self.log_container = QWidget()
-        self.log_layout = QVBoxLayout(self.log_container)
-        self.log_layout.setContentsMargins(0, 0, 0, 0)  # 移除内边距
+    def _setup_splitter(self):
+        """设置分割器区域"""
+        self.splitter = QSplitter(Qt.Vertical)
 
-        # 添加日志标签
-        self.log_label = QLabel("处理日志:")
-        self.log_layout.addWidget(self.log_label)
+        # 视频预览区域
+        self.video_player = VideoPlayer("视频预览:")
 
-        # 添加日志文本框
+        # 日志区域
+        log_group = QWidget()
+        log_layout = QVBoxLayout(log_group)
+
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
-        self.log_layout.addWidget(self.log_text)
 
-        # 日志按钮
-        self.log_button_layout = QHBoxLayout()
+        log_button_layout = QHBoxLayout()
         self.clear_log_button = QPushButton("清空日志")
-        self.clear_log_button.clicked.connect(self.clear_log)
         self.save_log_button = QPushButton("保存日志")
+
+        log_button_layout.addWidget(self.clear_log_button)
+        log_button_layout.addWidget(self.save_log_button)
+
+        log_layout.addWidget(QLabel("处理日志:"))
+        log_layout.addWidget(self.log_text)
+        log_layout.addLayout(log_button_layout)
+
+        # 添加到分割器
+        self.splitter.addWidget(self.video_player)
+        self.splitter.addWidget(log_group)
+        self.splitter.setSizes([300, 200])
+
+        self.right_layout.addWidget(self.splitter)
+
+    def _setup_connections(self):
+        """设置信号槽连接"""
+        # 按钮连接
+        self.run_button.clicked.connect(self.process_url_then_tasks)
+        self.start_tasks_button.clicked.connect(self.start_processing_tasks)
+        self.stop_button.clicked.connect(self.stop_process)
+        self.preview_button.clicked.connect(self.safe_preview_video)
+        self.open_folder_button.clicked.connect(self.open_output_folder)
+        self.select_video_button.clicked.connect(self.select_local_video)
+        self.add_task_button.clicked.connect(self.add_task)
+        self.clear_tasks_button.clicked.connect(self.clear_tasks)
+        self.clear_log_button.clicked.connect(self.clear_log)
         self.save_log_button.clicked.connect(self.save_log)
-        self.log_button_layout.addWidget(self.clear_log_button)
-        self.log_button_layout.addWidget(self.save_log_button)
-        self.log_layout.addLayout(self.log_button_layout)
 
-        # 添加到分割器并优化尺寸分配
-        self.right_splitter.addWidget(self.video_container)
-        self.right_splitter.addWidget(self.log_container)
+        # 表格双击事件
+        self.task_table.doubleClicked.connect(self.on_task_double_clicked)
 
-        # 设置更合理的尺寸分配 - 视频区域和日志区域各占一半
-        self.right_splitter.setSizes([500, 500])
+    def _load_resources(self):
+        """加载资源和配置"""
+        # 初始化任务管理器
+        self.task_manager = TaskManager()
 
-        # 防止分割条移动过多导致某个部分完全消失
-        self.right_splitter.setChildrenCollapsible(False)
-
-        self.right_layout.addWidget(self.right_splitter)
-
-        # 主分割器
-        self.main_splitter = QSplitter()
-        self.main_splitter.addWidget(self.left_widget)
-        self.main_splitter.addWidget(self.right_widget)
-
-        # 设置更平衡的尺寸分配
-        self.main_splitter.setSizes([500, 500])
-
-        # 防止分割条移动过多导致某个部分完全消失
-        self.main_splitter.setChildrenCollapsible(False)
-
-        # 设置最小宽度，确保两侧都有足够的空间
-        self.left_widget.setMinimumWidth(300)
-        self.right_widget.setMinimumWidth(300)
-
-        self.main_layout.addWidget(self.main_splitter)
-
-    # 配置方法
-    def update_config_summary(self):
-        """更新配置摘要显示"""
-        summary_text = ConfigUtils.format_config_summary(self.config)
-        self.config_summary.setText(summary_text)
-
-    def update_config(self, new_config):
-        """更新当前配置"""
-        self.config = new_config
+        # 加载配置
+        self.config = ConfigUtils.load_config(append_log_func=self.append_log)
         self.update_config_summary()
 
-    # UI交互方法
+        # 加载任务模型
+        self.task_model = TaskUtils.load_tasks(
+            self.task_manager, self.task_table, TaskTableModel, self.append_log)
+
+        # 初始化信号
+        self.signals = WorkerSignals()
+        self.signals.finished.connect(self.process_finished)
+        self.signals.progress.connect(self.update_progress)
+        self.signals.log.connect(self.append_log)
+        self.signals.error.connect(self.append_error)
+
+    def _init_state(self):
+        """初始化状态"""
+        self.update_ui_state(False)
+        self.append_log("系统初始化完成，准备就绪")
+        QTimer.singleShot(1000, self.check_pending_tasks)
+
+    def update_config_summary(self):
+        """更新配置摘要显示"""
+        summary = "当前配置:\n"
+        summary += f"• 视频文件夹: {self.config.get('video_folder', 'videos')}\n"
+        summary += f"• 分辨率: {self.config.get('resolution', '1080p')}\n"
+        summary += f"• 语音模型: {self.config.get('asr_model', 'WhisperX')}\n"
+        summary += f"• 翻译方法: {self.config.get('translation_method', 'LLM')}\n"
+        summary += f"• TTS引擎: {self.config.get('tts_method', 'EdgeTTS')}"
+
+        self.config_summary.setText(summary)
+
+    def update_config(self, new_config):
+        """更新配置"""
+        self.config = new_config
+        self.update_config_summary()
+        self.append_log("配置已更新")
+
     def select_local_video(self):
         """选择本地视频文件"""
-        file_path = UIUtils.select_local_video(self, self.append_log)
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "选择视频文件", "",
+            "视频文件 (*.mp4 *.avi *.mov *.mkv);;所有文件 (*)"
+        )
+
         if file_path:
             self.video_url.setText(file_path)
+            self.append_log(f"已选择本地视频: {file_path}")
 
     def append_log(self, message):
         """添加日志消息"""
-        UIUtils.append_log(self.log_text, message)
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+        self.log_text.append(f"[{timestamp}] {message}")
+        self.log_text.verticalScrollBar().setValue(
+            self.log_text.verticalScrollBar().maximum())
+
+    def append_error(self, message):
+        """添加错误消息"""
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+        self.log_text.append(f"[{timestamp}] [错误] {message}")
+        self.log_text.verticalScrollBar().setValue(
+            self.log_text.verticalScrollBar().maximum())
 
     def clear_log(self):
         """清空日志"""
-        UIUtils.clear_log(self.log_text, self.append_log)
+        self.log_text.clear()
+        self.append_log("日志已清空")
 
     def save_log(self):
-        """保存日志"""
-        UIUtils.save_log(self.log_text, self.append_log)
+        """保存日志到文件"""
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "保存日志", "", "日志文件 (*.log);;文本文件 (*.txt);;所有文件 (*)"
+        )
 
-    def preview_video(self):
-        """预览视频"""
+        if file_path:
+            try:
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(self.log_text.toPlainText())
+                self.append_log(f"日志已保存到: {file_path}")
+            except Exception as e:
+                self.append_error(f"保存日志失败: {str(e)}")
+
+    def safe_preview_video(self):
+        """安全的视频预览方法"""
+        if not hasattr(self, 'video_player') or not self.video_player:
+            self.append_error("视频播放器未初始化")
+            return
+
+        try:
+            if self.generated_video_path and os.path.exists(self.generated_video_path):
+                QTimer.singleShot(0, lambda: self.video_player.set_video(
+                    self.generated_video_path))
+                self.append_log(f"正在预览视频: {os.path.basename(self.generated_video_path)}")
+            else:
+                self.append_error("视频文件不存在或路径无效")
+        except RuntimeError as e:
+            self.append_error(f"预览失败: {str(e)}")
+
+    def open_output_folder(self):
+        """打开输出文件夹"""
         if self.generated_video_path and os.path.exists(self.generated_video_path):
-            UIUtils.preview_video(self.video_player, self.generated_video_path, self.append_log)
+            folder_path = os.path.dirname(self.generated_video_path)
+            try:
+                if os.name == 'nt':  # Windows
+                    os.startfile(folder_path)
+                elif os.name == 'posix':  # macOS/Linux
+                    os.system(f'open "{folder_path}"' if sys.platform == 'darwin'
+                              else f'xdg-open "{folder_path}"')
+                self.append_log(f"已打开文件夹: {folder_path}")
+            except Exception as e:
+                self.append_error(f"打开文件夹失败: {str(e)}")
+        else:
+            self.append_error("无法打开文件夹 - 视频路径无效")
 
-    def open_folder(self):
-        """打开视频所在目录"""
-        if self.generated_video_path and os.path.exists(self.generated_video_path):
-            UIUtils.open_folder(self.generated_video_path, self.append_log)
+    def update_progress(self, percent, message):
+        """更新进度显示"""
+        self.current_progress = percent
+        self.progress_bar.setValue(percent)
+        self.progress_label.setText(message)
 
-    def update_progress(self, progress, status):
-        """更新进度条和标签"""
-        self.current_progress = progress
-        self.progress_bar.setValue(progress)
-        self.progress_label.setText(status)
-        self.append_log(f"进度更新: {progress}% - {status}")
+        if percent == 100:
+            self.status_label.setText("处理完成")
+        elif percent > 0:
+            self.status_label.setText("处理中...")
 
-    # 任务管理方法
     def add_task(self):
-        """添加新任务到列表"""
+        """添加新任务"""
         url = self.video_url.text().strip()
-        task_id = TaskUtils.add_task(url, self.config, self.task_manager, self.task_model, self.append_log)
+        if not url:
+            QMessageBox.warning(self, "输入错误", "请输入视频URL或选择本地视频")
+            return
+
+        task_id = TaskUtils.add_task(
+            url, self.config, self.task_manager,
+            self.task_model, self.append_log
+        )
 
         if task_id:
             self.video_url.clear()
+            self.append_log(f"已添加任务 #{task_id}: {url}")
 
     def clear_tasks(self):
         """清空所有任务"""
         reply = QMessageBox.question(
-            self, '确认操作', '确定要清空所有任务吗？',
+            self, '确认', '确定要清空所有任务吗？此操作不可撤销！',
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No
         )
 
         if reply == QMessageBox.Yes:
             if TaskUtils.clear_tasks(self.task_manager, self.append_log):
                 self.task_model = TaskUtils.load_tasks(
-                    self.task_manager, self.task_table, TaskTableModel, self.append_log)
+                    self.task_manager, self.task_table,
+                    TaskTableModel, self.append_log
+                )
+                self.append_log("已清空所有任务")
+
+    def on_task_double_clicked(self, index):
+        """任务表格双击事件"""
+        task = self.task_model.get_task(index)
+        if task:
+            self.video_url.setText(task.url)
+            self.append_log(f"已加载任务 #{task.id}: {task.url}")
 
     def check_pending_tasks(self):
-        """检查待处理任务并启动下一个"""
-        if self.is_processing():
+        """检查待处理任务"""
+        if self._processing:
             return
 
-        next_task = TaskUtils.get_next_pending_task(self.task_manager, self.append_log)
+        next_task = TaskUtils.get_next_pending_task(
+            self.task_manager, self.append_log)
+
         if next_task:
             self.append_log(f"发现待处理任务 #{next_task.id}: {next_task.url}")
             self.run_task(next_task)
 
     def start_processing_tasks(self):
-        """开始处理任务列表中的任务"""
-        if self.is_processing():
+        """开始处理任务队列"""
+        if self._processing:
             QMessageBox.warning(self, "处理中", "当前有任务正在处理，请等待完成")
             return
 
-        next_task = TaskUtils.get_next_pending_task(self.task_manager, self.append_log)
+        next_task = TaskUtils.get_next_pending_task(
+            self.task_manager, self.append_log)
+
         if next_task:
             self.append_log(f"开始处理任务 #{next_task.id}: {next_task.url}")
             self.run_task(next_task)
         else:
+            QMessageBox.information(self, "提示", "没有待处理的任务")
             self.append_log("没有待处理的任务")
-            QMessageBox.information(self, "无待处理任务", "任务列表中没有待处理的任务")
 
     def process_url_then_tasks(self):
-        """处理URL输入框中的URL，完成后继续处理任务列表"""
+        """处理当前URL然后继续任务队列"""
         url = self.video_url.text().strip()
         if not url:
-            QMessageBox.warning(self, "输入错误", "请输入要处理的URL")
+            QMessageBox.warning(self, "输入错误", "请输入视频URL或选择本地视频")
             return
 
-        if self.is_processing():
+        if self._processing:
             QMessageBox.warning(self, "处理中", "当前有任务正在处理，请等待完成")
             return
 
-        # 先添加到任务列表，设为最高优先级
-        task_id = TaskUtils.add_task(url, self.config, self.task_manager, self.task_model, self.append_log)
-        if task_id:
-            self.append_log(f"已添加并将开始处理URL: {url}")
-            self.video_url.clear()
+        # 先添加到任务队列
+        task_id = TaskUtils.add_task(
+            url, self.config, self.task_manager,
+            self.task_model, self.append_log
+        )
 
-            # 立即开始处理此任务
+        if task_id:
+            self.video_url.clear()
             task = self.task_manager.get_task(task_id)
             if task:
                 self.run_task(task)
 
-    def is_processing(self):
-        """检查是否有任务正在处理中"""
-        return self._processing
-
     def run_task(self, task):
         """运行指定任务"""
-        self._processing = True  # 设置处理标志
-
         self.current_task_id = task.id
         self.video_url.setText(task.url)
 
-        # 更新任务状态为处理中
+        # 更新任务状态
         TaskUtils.update_task_status(
-            task.id,
-            self.task_manager,
-            self.task_model,
-            "处理中",
-            started_at=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            task.id, self.task_manager, self.task_model,
+            "处理中", started_at=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             append_log_func=self.append_log
         )
 
         # 开始处理
-        self.run_process(task_id=task.id)
-
-    def get_selected_platforms(self):
-        """获取选中的自动发布平台"""
-        selected_platforms = []
-        for platform, checkbox in self.platform_checkboxes.items():
-            if checkbox.isChecked():
-                selected_platforms.append(platform)
-        return selected_platforms
-
-    def process_thread(self, task_id=None):
-        """异步处理线程"""
-        config = self.config or {}
-        try:
-            self.signals.log.emit("开始处理...")
-            self.signals.progress.emit(0, "初始化处理...")
-            url = self.video_url.text()
-
-            # 记录重要参数
-            self.signals.log.emit(f"视频文件夹: {config.get('video_folder', 'videos')}")
-            self.signals.log.emit(f"视频URL: {url}")
-            self.signals.log.emit(f"分辨率: {config.get('resolution', '1080p')}")
-
-            # 获取选中的自动发布平台
-            auto_publish_platforms = self.get_selected_platforms()
-            if auto_publish_platforms:
-                self.signals.log.emit(f"自动发布平台: {', '.join(auto_publish_platforms)}")
-            else:
-                self.signals.log.emit("未启用自动发布")
-
-            # 更详细的参数记录
-            self.signals.log.emit("-" * 50)
-            self.signals.log.emit("处理参数:")
-            self.signals.log.emit(f"下载视频数量: {config.get('video_count', 5)}")
-            self.signals.log.emit(f"分辨率: {config.get('resolution', '1080p')}")
-            self.signals.log.emit(f"人声分离模型: {config.get('model', 'htdemucs_ft')}")
-            self.signals.log.emit(f"计算设备: {config.get('device', 'auto')}")
-            self.signals.log.emit(f"移位次数: {config.get('shifts', 5)}")
-            self.signals.log.emit(f"ASR模型: {config.get('asr_model', 'WhisperX')}")
-            self.signals.log.emit(f"WhisperX模型大小: {config.get('whisperx_size', 'large')}")
-            self.signals.log.emit(f"翻译方法: {config.get('translation_method', 'LLM')}")
-            self.signals.log.emit(f"TTS方法: {config.get('tts_method', 'EdgeTTS')}")
-            self.signals.log.emit("-" * 50)
-
-            # 自定义进度回调函数
-            def progress_callback(percent, status):
-                self.signals.progress.emit(percent, status)
-
-            # 实际的处理调用
-            if DISABLE_PROCESSING:
-                # 模拟处理结果
-                self.signals.log.emit("模拟处理模式，不进行实际处理")
-                time.sleep(2)
-                result = "模拟处理完成"
-                video_path = ""
-            else:
-                result, video_path = do_everything(
-                    config.get('video_folder', 'videos'),
-                    url,
-                    config.get('video_count', 5),
-                    config.get('resolution', '1080p'),
-                    config.get('model', 'htdemucs_ft'),
-                    config.get('device', 'auto'),
-                    config.get('shifts', 5),
-                    config.get('asr_model', 'WhisperX'),
-                    config.get('whisperx_size', 'large'),
-                    config.get('batch_size', 32),
-                    config.get('separate_speakers', True),
-                    config.get('min_speakers', None),
-                    config.get('max_speakers', None),
-                    config.get('translation_method', 'LLM'),
-                    config.get('target_language_translation', '简体中文'),
-                    config.get('tts_method', 'EdgeTTS'),
-                    config.get('target_language_tts', '中文'),
-                    config.get('edge_tts_voice', 'zh-CN-XiaoxiaoNeural'),
-                    config.get('add_subtitles', True),
-                    config.get('speed_factor', 1.00),
-                    config.get('frame_rate', 30),
-                    config.get('background_music', None),
-                    config.get('bg_music_volume', 0.5),
-                    config.get('video_volume', 1.0),
-                    config.get('output_resolution', '1080p'),
-                    config.get('max_workers', 1),
-                    config.get('max_retries', 3),
-                    progress_callback,
-                    auto_publish_platforms  # 传递自动发布平台参数
-                )
-
-            # 完成处理，设置100%进度
-            self.signals.progress.emit(100, "处理完成!")
-            self.signals.log.emit(f"处理完成: {result}")
-            if video_path:
-                self.signals.log.emit(f"生成视频路径: {video_path}")
-
-            # 更新任务状态（如果是来自任务队列的请求）
-            if task_id:
-                TaskUtils.update_task_status(
-                    task_id,
-                    self.task_manager,
-                    self.task_model,
-                    "已完成" if video_path else "失败",
-                    completed_at=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    result=result,
-                    output_path=video_path if video_path else "",
-                    append_log_func=self.signals.log.emit
-                )
-
-            # 处理完成，发送信号
-            self.signals.finished.emit(result, video_path if video_path else "")
-
-        except Exception as e:
-            # 捕获并记录完整的堆栈跟踪信息
-            import traceback
-            stack_trace = traceback.format_exc()
-            error_msg = f"处理失败: {str(e)}\n\n堆栈跟踪:\n{stack_trace}"
-            self.signals.log.emit(error_msg)
-            self.signals.progress.emit(0, "处理失败")
-
-            # 更新任务状态为失败（如果是来自任务队列的请求）
-            if task_id:
-                TaskUtils.update_task_status(
-                    task_id,
-                    self.task_manager,
-                    self.task_model,
-                    "失败",
-                    completed_at=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                    result=f"处理失败: {str(e)}",
-                    output_path="",
-                    append_log_func=self.signals.log.emit
-                )
-
-            self.signals.finished.emit(f"处理失败: {str(e)}", "")
+        self.run_process(task.id)
 
     def run_process(self, task_id=None):
-        """开始处理"""
-        # 设置处理中状态
+        """启动处理流程"""
+        if self._processing:
+            self.append_error("已有任务正在处理")
+            return
+
         self._processing = True
+        self.update_ui_state(True)
 
-        # 更新UI状态
-        self.run_button.setEnabled(False)
-        self.start_tasks_button.setEnabled(False)
-        self.stop_button.setEnabled(True)
-        self.preview_button.setEnabled(False)
-        self.open_folder_button.setEnabled(False)
-        self.status_label.setText("正在处理...")
+        url = self.video_url.text()
+        if not url:
+            self.append_error("没有可处理的URL")
+            self.process_finished("没有可处理的URL", "")
+            return
 
-        # 重置进度
-        self.current_progress = 0
-        self.current_step = 0
-        self.progress_bar.setValue(0)
-        self.progress_label.setText("准备处理...")
+        self.append_log("=" * 50)
+        self.append_log(f"开始处理: {url}")
 
-        # 记录处理开始
-        self.append_log("-" * 50)
-        self.append_log(f"开始处理 - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        self.append_log(f"视频URL: {self.video_url.text()}")
+        # 创建处理线程
+        self.processing_thread = ProcessingThread(
+            task_id=task_id,
+            config=self.config,
+            video_url=url,
+            platform_checkboxes=self.platform_checkboxes,
+            signals=self.signals,
+            parent=self
+        )
 
-        # 记录自动发布平台
-        selected_platforms = self.get_selected_platforms()
-        if selected_platforms:
-            self.append_log(f"自动发布平台: {', '.join(selected_platforms)}")
-        else:
-            self.append_log("未启用自动发布")
+        # 连接线程完成信号
+        self.processing_thread.finished.connect(
+            lambda: self.processing_thread.deleteLater())
 
-        if DISABLE_PROCESSING:
-            # 模拟处理过程
-            self.append_log("处理功能已禁用，仅显示UI")
-            self.status_label.setText("模拟处理中...")
-            self.progress_bar.setValue(50)
-            self.progress_label.setText("模拟进度: 50%")
-
-            # 5秒后显示模拟完成
-            QTimer.singleShot(5000, lambda: self.process_finished("模拟处理完成", "", task_id))
-        else:
-            # 创建并启动处理线程
-            self.worker_thread = threading.Thread(target=lambda: self.process_thread(task_id))
-            self.worker_thread.daemon = True
-            self.worker_thread.start()
+        # 启动线程
+        self.processing_thread.start()
 
     def stop_process(self):
         """停止处理"""
         if not self._processing:
             return
 
-        # TODO: 添加中断处理线程的代码
-        # 注意：这里仅设置状态并更新UI，实际中断需要在process_thread中实现
+        if self.processing_thread:
+            self.processing_thread.stop()
+            self.processing_thread.quit()
+            self.processing_thread.wait(500)
 
         self._processing = False
-        self.run_button.setEnabled(True)
-        self.start_tasks_button.setEnabled(True)
-        self.stop_button.setEnabled(False)
-        self.status_label.setText("处理已停止")
-        self.append_log("用户手动停止处理")
+        self.update_ui_state(False)
+        self.append_log("处理已停止")
 
-        # 更新当前任务状态为失败（如果有）
         if self.current_task_id:
             TaskUtils.update_task_status(
-                self.current_task_id,
-                self.task_manager,
-                self.task_model,
-                "失败",
-                completed_at=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                result="用户手动停止处理",
-                output_path="",
+                self.current_task_id, self.task_manager, self.task_model,
+                "已取消", completed_at=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                result="用户手动停止", output_path="",
                 append_log_func=self.append_log
             )
             self.current_task_id = None
 
-    def process_finished(self, result, video_path, task_id=None):
-        """处理完成的回调"""
+    def process_finished(self, result, video_path):
+        """处理完成回调"""
         self._processing = False
+        self.update_ui_state(False)
 
-        # 更新UI状态
-        self.run_button.setEnabled(True)  # 重新启用一键处理按钮
-        self.start_tasks_button.setEnabled(True)  # 重新启用开始任务按钮
-        self.stop_button.setEnabled(False)  # 禁用停止处理按钮
-        self.status_label.setText(result)
-
-        # 存储生成的视频路径
         self.generated_video_path = video_path
+        self.status_label.setText(result.split(':')[0] if ':' in result else result)
 
-        # 记录处理完成
-        self.append_log(f"处理完成 - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        self.append_log(f"结果: {result}")
-
-        # 如果有视频路径，启用预览按钮和打开文件夹按钮，并加载视频
         if video_path and os.path.exists(video_path):
             self.preview_button.setEnabled(True)
             self.open_folder_button.setEnabled(True)
-            self.video_player.set_video(video_path)
-            self.append_log(f"生成视频路径: {video_path}")
+            self.safe_preview_video()
+            self.append_log(f"生成视频: {video_path}")
         else:
-            self.append_log("未生成视频或视频路径无效")
+            self.append_log("未生成有效视频文件")
 
-        # 更新任务状态（如果是任务完成的回调）
-        if task_id:
-            TaskUtils.update_task_status(
-                task_id,
-                self.task_manager,
-                self.task_model,
-                "已完成" if video_path else "失败",
-                completed_at=datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                result=result,
-                output_path=video_path if video_path else "",
-                append_log_func=self.append_log
-            )
-            self.current_task_id = None
+        # 检查更多任务
+        QTimer.singleShot(1000, self.check_pending_tasks)
 
-        # 检查是否有更多任务
-        QTimer.singleShot(1000, self.start_processing_tasks)
+    def update_ui_state(self, processing):
+        """更新UI状态"""
+        self.run_button.setEnabled(not processing)
+        self.start_tasks_button.setEnabled(not processing)
+        self.stop_button.setEnabled(processing)
+        self.preview_button.setEnabled(not processing and bool(self.generated_video_path))
+        self.open_folder_button.setEnabled(not processing and bool(self.generated_video_path))
+
+        if processing:
+            self.status_label.setText("处理中...")
+        else:
+            self.status_label.setText("准备就绪")
+
+    def cleanup(self):
+        """清理资源"""
+        if hasattr(self, 'signals'):
+            self.signals._active = False
+
+        if hasattr(self, 'processing_thread') and self.processing_thread:
+            self.processing_thread.stop()
+            self.processing_thread.quit()
+            self.processing_thread.wait(500)
+
+    def closeEvent(self, event):
+        """窗口关闭事件"""
+        self.cleanup()
+        super().closeEvent(event)
+
+
+if __name__ == "__main__":
+    from PySide6.QtWidgets import QApplication
+    import sys
+
+    app = QApplication(sys.argv)
+    window = FullAutoTab()
+    window.show()
+    sys.exit(app.exec())
