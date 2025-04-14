@@ -102,11 +102,12 @@ def tts(text, output_path, speaker_wav=None, model_name="SparkTTS/pretrained_mod
         try:
             with torch.no_grad():
                 wav = model.inference(
-                    text,
-                    prompt_speech=speaker_wav,
-                    gender=gender,
-                    pitch=pitch_val,
-                    speed=speed_val,
+                    text,          # 第1个参数：文本
+                    speaker_wav,   # 第2个参数：参考音频 (按位置传递)
+                    None,          # 第3个参数：参考音频文本 (你的tts函数没传这个，所以给None)
+                    gender,        # 第4个参数：性别 (后面这些用关键字或位置都可以，但按位置更保险)
+                    pitch_val,     # 第5个参数：音高
+                    speed_val      # 第6个参数：语速
                 )
 
             os.makedirs(os.path.dirname(output_path), exist_ok=True)

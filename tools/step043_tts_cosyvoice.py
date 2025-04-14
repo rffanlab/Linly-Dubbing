@@ -7,8 +7,8 @@ from .utils import save_wav
 import sys
 sys.path.append('CosyVoice/third_party/Matcha-TTS')
 sys.path.append('CosyVoice/')
-from cosyvoice.cli.cosyvoice import CosyVoice
-from cosyvoice.utils.file_utils import load_wav
+from CosyVoice.cosyvoice.cli.cosyvoice import CosyVoice
+from CosyVoice.cosyvoice.utils.file_utils import load_wav
 import torchaudio
 from modelscope import snapshot_download
 model = None
