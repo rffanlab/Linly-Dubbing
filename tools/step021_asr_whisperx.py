@@ -42,6 +42,14 @@ def load_whisper_model(model_name: str = 'large', download_root = 'models/ASR/wh
     t_end = time.time()
     logger.info(f'Loaded WhisperX model: {model_name} in {t_end - t_start:.2f}s')
 
+def unload_whisperx_models():
+    global whisper_model
+    if whisper_model is not None:
+        whisper_model = None
+        logger.info(f'Unloading WhisperX')
+        torch.cuda.empty_cache()
+        logger.info(f'')
+
 def load_align_model(language='en', device='auto', model_dir='models/ASR/whisper'):
     global align_model, language_code, align_metadata
     if align_model is not None and language_code == language:

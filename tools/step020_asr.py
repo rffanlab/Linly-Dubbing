@@ -3,7 +3,7 @@ import os
 import torch
 import numpy as np
 from dotenv import load_dotenv
-from .step021_asr_whisperx import whisperx_transcribe_audio
+from .step021_asr_whisperx import whisperx_transcribe_audio, unload_whisperx_models
 from .step022_asr_funasr import funasr_transcribe_audio
 from .utils import save_wav
 import json
@@ -85,6 +85,10 @@ def transcribe_audio(method, folder, model_name: str = 'large', download_root='m
     logger.info(f'Transcribed {wav_path} successfully, and saved to {os.path.join(folder, "transcript.json")}')
     generate_speaker_audio(folder, transcript)
     return transcript
+
+def unload_model(method):
+    if method == 'WhisperX':
+        unload_whisperx_models()
 
 def transcribe_all_audio_under_folder(folder, asr_method, whisper_model_name: str = 'large', device='auto', batch_size=32, diarization=False, min_speakers=None, max_speakers=None):
     transcribe_json = None
